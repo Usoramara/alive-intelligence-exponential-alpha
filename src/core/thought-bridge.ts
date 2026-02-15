@@ -18,6 +18,7 @@ interface ActionDecision {
   workingMemorySummary?: string;
   discourseContext?: { currentTopic: string | null; openQuestions: string[]; commitments: string[] };
   metacognitionContext?: { uncertainty: number; processingLoad: number; emotionalRegulation: string | null };
+  useLite?: boolean;
 }
 
 interface ConversationEntry {
@@ -85,25 +86,36 @@ export class ThoughtBridge {
     }
 
     try {
-      const response = await fetch('/api/mind/think', {
+      // Route to think-lite when Sonnet budget is exhausted
+      const endpoint = decision.useLite ? '/api/mind/think-lite' : '/api/mind/think';
+      const body = decision.useLite
+        ? {
+            content: decision.content,
+            context: decision.context,
+            selfState: decision.selfState,
+            conversationHistory: this.conversationHistory.slice(0, -1),
+          }
+        : {
+            content: decision.content,
+            context: decision.context,
+            selfState: decision.selfState,
+            conversationHistory: this.conversationHistory.slice(0, -1),
+            empathicState: decision.empathicState,
+            tomInference: decision.tomInference,
+            recentMemories: decision.recentMemories,
+            detectedEmotions: decision.detectedEmotions,
+            strategicPriority: decision.strategicPriority,
+            recentInnerThoughts: decision.recentInnerThoughts,
+            responseStyle: decision.responseStyle,
+            workingMemorySummary: decision.workingMemorySummary,
+            discourseContext: decision.discourseContext,
+            metacognitionContext: decision.metacognitionContext,
+          };
+
+      const response = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          content: decision.content,
-          context: decision.context,
-          selfState: decision.selfState,
-          conversationHistory: this.conversationHistory.slice(0, -1), // Exclude current
-          empathicState: decision.empathicState,
-          tomInference: decision.tomInference,
-          recentMemories: decision.recentMemories,
-          detectedEmotions: decision.detectedEmotions,
-          strategicPriority: decision.strategicPriority,
-          recentInnerThoughts: decision.recentInnerThoughts,
-          responseStyle: decision.responseStyle,
-          workingMemorySummary: decision.workingMemorySummary,
-          discourseContext: decision.discourseContext,
-          metacognitionContext: decision.metacognitionContext,
-        }),
+        body: JSON.stringify(body),
       });
 
       if (!response.ok) {

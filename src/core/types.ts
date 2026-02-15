@@ -66,6 +66,8 @@ export type SignalType =
   | 'prediction-error'
   // Metacognition signals
   | 'metacognition-update'
+  // Resource management signals
+  | 'resource-budget'
   // System signals
   | 'engine-status'
   | 'persist-state'

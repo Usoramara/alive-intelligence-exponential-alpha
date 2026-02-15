@@ -32,6 +32,7 @@ interface ActionDecision {
   workingMemorySummary?: string;
   discourseContext?: { currentTopic: string | null; openQuestions: string[]; commitments: string[] };
   metacognitionContext?: { uncertainty: number; processingLoad: number; emotionalRegulation: string | null };
+  useLite?: boolean;
 }
 
 export class ArbiterEngine extends Engine {
@@ -48,6 +49,7 @@ export class ArbiterEngine extends Engine {
   private latestWorkingMemory?: { summary: string; items: unknown[] };
   private latestDiscourse?: { currentTopic: string | null; openQuestions: string[]; commitments: string[] };
   private latestMetacognition?: { uncertainty: number; processingLoad: number; emotionalRegulation: string | null; coherence: number };
+  private latestResourceBudget?: { sonnetRemaining: number; suggestedMaxTokens: number; useLite: boolean };
 
   // Energy recovery tracking
   private energyDeferralCount = 0;
@@ -71,6 +73,7 @@ export class ArbiterEngine extends Engine {
       'working-memory-update',
       'discourse-state',
       'metacognition-update',
+      'resource-budget',
     ];
   }
 
@@ -144,6 +147,8 @@ export class ArbiterEngine extends Engine {
         this.latestDiscourse = signal.payload as typeof this.latestDiscourse;
       } else if (signal.type === 'metacognition-update') {
         this.latestMetacognition = signal.payload as typeof this.latestMetacognition;
+      } else if (signal.type === 'resource-budget') {
+        this.latestResourceBudget = signal.payload as typeof this.latestResourceBudget;
       }
     }
 
@@ -188,6 +193,12 @@ export class ArbiterEngine extends Engine {
         // Compute energy/arousal-modulated response style
         const responseStyle = this.computeResponseStyle(selfState);
 
+        // Apply resource budget adjustments
+        if (this.latestResourceBudget) {
+          responseStyle.maxTokens = Math.min(responseStyle.maxTokens, this.latestResourceBudget.suggestedMaxTokens);
+        }
+        const useLite = this.latestResourceBudget?.useLite ?? false;
+
         // Request Claude thinking via server — pack in enriched context
         const actionDecision: ActionDecision = {
           action: 'respond',
@@ -211,6 +222,7 @@ export class ArbiterEngine extends Engine {
                 emotionalRegulation: this.latestMetacognition.emotionalRegulation,
               }
             : undefined,
+          useLite,
         };
 
         this.emit('thought', actionDecision, {

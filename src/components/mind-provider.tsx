@@ -41,6 +41,9 @@ import { WorkingMemoryEngine } from '@/core/engines/thalamus/working-memory-engi
 import { DiscourseEngine } from '@/core/engines/thalamus/discourse-engine';
 // Phase 4 — Metacognition
 import { MetacognitionEngine } from '@/core/engines/thalamus/metacognition-engine';
+// Phase 5 — Prediction & Resources
+import { PredictionEngine } from '@/core/engines/thalamus/prediction-engine';
+import { ResourceManagerEngine } from '@/core/engines/thalamus/resource-manager-engine';
 // Phase 7 — Body & Safety
 import { MicrophoneEngine } from '@/core/engines/outer/microphone-engine';
 import { SafetyEngine } from '@/core/engines/outer/safety-engine';
@@ -99,6 +102,10 @@ export function MindProvider({ children }: { children: ReactNode }) {
 
     // Phase 4 engines
     loop.registerEngine(new MetacognitionEngine());
+
+    // Phase 5 engines
+    loop.registerEngine(new PredictionEngine());
+    loop.registerEngine(new ResourceManagerEngine());
 
     // Phase 7 engines
     loop.registerEngine(new MicrophoneEngine());
