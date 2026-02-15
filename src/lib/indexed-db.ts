@@ -12,6 +12,9 @@ export interface MemoryRecord {
 }
 
 function openDB(): Promise<IDBDatabase> {
+  if (typeof window === 'undefined') {
+    return Promise.reject(new Error('IndexedDB is not available on the server'));
+  }
   return new Promise((resolve, reject) => {
     const request = indexedDB.open(DB_NAME, DB_VERSION);
 
