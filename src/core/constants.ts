@@ -34,6 +34,8 @@ export const ENGINE_IDS = {
   SYNC: 'sync',
   MEMORY_WRITE: 'memory-write',
   GROWTH: 'growth',
+  WORKING_MEMORY: 'working-memory',
+  DISCOURSE: 'discourse',
 
   // Body (Output)
   EXPRESSION: 'expression',
@@ -77,6 +79,8 @@ export const TICK_RATES: Record<EngineId, number> = {
   [ENGINE_IDS.SYNC]: 50,             // Temporal alignment
   [ENGINE_IDS.MEMORY_WRITE]: 500,    // Significance scoring
   [ENGINE_IDS.GROWTH]: 30000,        // Self-improvement
+  [ENGINE_IDS.WORKING_MEMORY]: 200,  // Short-term buffer
+  [ENGINE_IDS.DISCOURSE]: 500,       // Topic tracking
 
   // Body — variable
   [ENGINE_IDS.EXPRESSION]: 33,       // ~30fps face
@@ -115,6 +119,8 @@ export const ENGINE_ZONES: Record<EngineId, Zone> = {
   [ENGINE_IDS.SYNC]: 'thalamus',
   [ENGINE_IDS.MEMORY_WRITE]: 'thalamus',
   [ENGINE_IDS.GROWTH]: 'thalamus',
+  [ENGINE_IDS.WORKING_MEMORY]: 'thalamus',
+  [ENGINE_IDS.DISCOURSE]: 'thalamus',
 
   [ENGINE_IDS.EXPRESSION]: 'body',
   [ENGINE_IDS.VOICE]: 'body',
@@ -152,6 +158,8 @@ export const ENGINE_NAMES: Record<EngineId, string> = {
   [ENGINE_IDS.SYNC]: 'Sync',
   [ENGINE_IDS.MEMORY_WRITE]: 'Memory Write',
   [ENGINE_IDS.GROWTH]: 'Growth',
+  [ENGINE_IDS.WORKING_MEMORY]: 'Working Memory',
+  [ENGINE_IDS.DISCOURSE]: 'Discourse',
 
   [ENGINE_IDS.EXPRESSION]: 'Expression',
   [ENGINE_IDS.VOICE]: 'Voice',
@@ -220,6 +228,8 @@ export const ENGINE_POSITIONS: Record<EngineId, { x: number; y: number }> = {
   [ENGINE_IDS.SYNC]:         { x: 0.50, y: 0.50 },
   [ENGINE_IDS.MEMORY_WRITE]: { x: 0.43, y: 0.65 },
   [ENGINE_IDS.GROWTH]:       { x: 0.57, y: 0.65 },
+  [ENGINE_IDS.WORKING_MEMORY]: { x: 0.36, y: 0.50 },
+  [ENGINE_IDS.DISCOURSE]:      { x: 0.64, y: 0.50 },
 
   // Body — bottom center
   [ENGINE_IDS.EXPRESSION]:   { x: 0.38, y: 0.88 },
@@ -323,6 +333,13 @@ export const SIGNAL_PATHS: Array<[EngineId, EngineId]> = [
   ['binder', 'empathic-coupling'],
   ['memory', 'tom'],
   ['memory', 'default-mode'],
+
+  // Working memory & discourse
+  ['binder', 'working-memory'],
+  ['working-memory', 'arbiter'],
+  ['working-memory', 'memory-write'],
+  ['binder', 'discourse'],
+  ['discourse', 'arbiter'],
 
   // Consciousness stream — self-loop for thought chaining
   ['default-mode', 'default-mode'],

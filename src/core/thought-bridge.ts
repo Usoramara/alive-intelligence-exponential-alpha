@@ -14,6 +14,9 @@ interface ActionDecision {
   detectedEmotions?: { emotions: string[]; valence: number; arousal: number; confidence: number };
   strategicPriority?: { description: string; priority: number; progress: number };
   recentInnerThoughts?: string[];
+  responseStyle?: { maxTokens: number; urgency: string; tone: string };
+  workingMemorySummary?: string;
+  discourseContext?: { currentTopic: string | null; openQuestions: string[]; commitments: string[] };
 }
 
 interface ConversationEntry {
@@ -95,6 +98,9 @@ export class ThoughtBridge {
           detectedEmotions: decision.detectedEmotions,
           strategicPriority: decision.strategicPriority,
           recentInnerThoughts: decision.recentInnerThoughts,
+          responseStyle: decision.responseStyle,
+          workingMemorySummary: decision.workingMemorySummary,
+          discourseContext: decision.discourseContext,
         }),
       });
 

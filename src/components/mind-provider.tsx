@@ -36,6 +36,9 @@ import { StrategyEngine } from '@/core/engines/inner/strategy-engine';
 import { ReplayEngine } from '@/core/engines/inner/replay-engine';
 import { LoveFieldEngine } from '@/core/engines/inner/love-field-engine';
 import { GrowthEngine } from '@/core/engines/thalamus/growth-engine';
+// Evolution — Working Memory & Discourse
+import { WorkingMemoryEngine } from '@/core/engines/thalamus/working-memory-engine';
+import { DiscourseEngine } from '@/core/engines/thalamus/discourse-engine';
 // Phase 7 — Body & Safety
 import { MicrophoneEngine } from '@/core/engines/outer/microphone-engine';
 import { SafetyEngine } from '@/core/engines/outer/safety-engine';
@@ -87,6 +90,10 @@ export function MindProvider({ children }: { children: ReactNode }) {
     loop.registerEngine(new ReplayEngine());
     loop.registerEngine(new LoveFieldEngine());
     loop.registerEngine(new GrowthEngine());
+
+    // Evolution engines — Working Memory & Discourse
+    loop.registerEngine(new WorkingMemoryEngine());
+    loop.registerEngine(new DiscourseEngine());
 
     // Phase 7 engines
     loop.registerEngine(new MicrophoneEngine());

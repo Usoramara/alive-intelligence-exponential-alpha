@@ -29,6 +29,8 @@ interface ActionDecision {
   strategicPriority?: { description: string; priority: number; progress: number };
   recentInnerThoughts?: string[];
   responseStyle?: ResponseStyle;
+  workingMemorySummary?: string;
+  discourseContext?: { currentTopic: string | null; openQuestions: string[]; commitments: string[] };
 }
 
 export class ArbiterEngine extends Engine {
@@ -42,6 +44,8 @@ export class ArbiterEngine extends Engine {
   private latestMemoryResults: string[] = [];
   private latestEmpathicState?: { mirroring: string; coupling: number; resonance: string };
   private latestStrategicPriority?: { description: string; priority: number; progress: number };
+  private latestWorkingMemory?: { summary: string; items: unknown[] };
+  private latestDiscourse?: { currentTopic: string | null; openQuestions: string[]; commitments: string[] };
 
   // Energy recovery tracking
   private energyDeferralCount = 0;
@@ -62,6 +66,8 @@ export class ArbiterEngine extends Engine {
       'emotion-detected',
       'memory-result',
       'strategy-update',
+      'working-memory-update',
+      'discourse-state',
     ];
   }
 
@@ -129,6 +135,10 @@ export class ArbiterEngine extends Engine {
       } else if (signal.type === 'strategy-update') {
         const strategy = signal.payload as { currentPriority: { description: string; priority: number; progress: number } };
         this.latestStrategicPriority = strategy.currentPriority;
+      } else if (signal.type === 'working-memory-update') {
+        this.latestWorkingMemory = signal.payload as typeof this.latestWorkingMemory;
+      } else if (signal.type === 'discourse-state') {
+        this.latestDiscourse = signal.payload as typeof this.latestDiscourse;
       }
     }
 
@@ -187,6 +197,8 @@ export class ArbiterEngine extends Engine {
           strategicPriority: this.latestStrategicPriority,
           recentInnerThoughts,
           responseStyle,
+          workingMemorySummary: this.latestWorkingMemory?.summary,
+          discourseContext: this.latestDiscourse,
         };
 
         this.emit('thought', actionDecision, {

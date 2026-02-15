@@ -46,6 +46,8 @@ export interface ThinkParams {
   strategicPriority?: { description: string; priority: number; progress: number };
   recentInnerThoughts?: string[];
   responseStyle?: ResponseStyle;
+  workingMemorySummary?: string;
+  discourseContext?: { currentTopic: string | null; openQuestions: string[]; commitments: string[] };
 }
 
 export interface ThinkResult {
@@ -128,6 +130,25 @@ Use these memories naturally if relevant. Don't force references, but let them i
     sections.push(`RECENT INNER THOUGHTS (your private stream of consciousness — these are your own thoughts, not spoken aloud):
 ${params.recentInnerThoughts.join('\n')}
 Let these inner reflections naturally inform your response — don't quote them directly, but let them shape your tone and depth.`);
+  }
+
+  // Working memory contents
+  if (params.workingMemorySummary) {
+    sections.push(`WORKING MEMORY (what you're currently holding in mind):
+${params.workingMemorySummary}`);
+  }
+
+  // Discourse state
+  if (params.discourseContext) {
+    const { currentTopic, openQuestions, commitments } = params.discourseContext;
+    const parts: string[] = [];
+    if (currentTopic) parts.push(`Current topic: ${currentTopic}`);
+    if (openQuestions.length > 0) parts.push(`Open questions from user: ${openQuestions.join('; ')}`);
+    if (commitments.length > 0) parts.push(`Your commitments: ${commitments.join('; ')}`);
+    if (parts.length > 0) {
+      sections.push(`DISCOURSE STATE:\n${parts.join('\n')}
+Address open questions if relevant. Honor your commitments.`);
+    }
   }
 
   if (sections.length === 0) return '';

@@ -56,6 +56,10 @@ export type SignalType =
   // Consciousness stream signals
   | 'stream-thought'
   | 'drive-pulse'
+  // Working memory & discourse signals
+  | 'working-memory-update'
+  | 'discourse-state'
+  | 'item-evicted'
   // System signals
   | 'engine-status'
   | 'persist-state'
