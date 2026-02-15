@@ -10,6 +10,12 @@ interface BoundRepresentation {
   needsClaude: boolean;
 }
 
+interface ResponseStyle {
+  maxTokens: number;
+  urgency: 'low' | 'normal' | 'high';
+  tone: 'gentle' | 'neutral' | 'energetic';
+}
+
 interface ActionDecision {
   action: 'respond' | 'think' | 'observe' | 'wait';
   content: string;
@@ -22,6 +28,7 @@ interface ActionDecision {
   detectedEmotions?: { emotions: string[]; valence: number; arousal: number; confidence: number };
   strategicPriority?: { description: string; priority: number; progress: number };
   recentInnerThoughts?: string[];
+  responseStyle?: ResponseStyle;
 }
 
 export class ArbiterEngine extends Engine {
@@ -35,6 +42,9 @@ export class ArbiterEngine extends Engine {
   private latestMemoryResults: string[] = [];
   private latestEmpathicState?: { mirroring: string; coupling: number; resonance: string };
   private latestStrategicPriority?: { description: string; priority: number; progress: number };
+
+  // Energy recovery tracking
+  private energyDeferralCount = 0;
 
   constructor() {
     super(ENGINE_IDS.ARBITER);
@@ -61,7 +71,8 @@ export class ArbiterEngine extends Engine {
         this.pendingDecisions.push(signal.payload as BoundRepresentation);
       } else if (signal.type === 'claude-response') {
         this.waitingForClaude = false;
-        this.pendingDecisions = [];  // Clear stale decisions — response already happened
+        this.pendingDecisions = [];
+        this.energyDeferralCount = 0; // Reset deferral count on successful response
         const response = signal.payload as { text: string; emotionShift?: Partial<SelfState> };
 
         // Apply emotion shift from Claude's reasoning
@@ -100,11 +111,9 @@ export class ArbiterEngine extends Engine {
         this.debugInfo = `Response: "${response.text.slice(0, 30)}..."`;
         this.lastResponseTime = Date.now();
       } else if (signal.type === 'value-violation') {
-        // Values engine vetoed — suppress the response
         this.pendingDecisions = [];
         this.debugInfo = 'Value violation — suppressed';
       } else if (signal.type === 'safety-alert') {
-        // Safety override — immediate
         this.pendingDecisions = [];
         this.waitingForClaude = false;
         this.debugInfo = 'Safety override';
@@ -126,13 +135,25 @@ export class ArbiterEngine extends Engine {
     // Process pending decisions
     if (this.pendingDecisions.length > 0 && !this.waitingForClaude) {
       const decision = this.pendingDecisions.shift()!;
-      this.pendingDecisions = []; // Clear others — focus on latest
+      this.pendingDecisions = [];
 
       if (decision.needsClaude) {
+        const selfState = this.selfState.get();
+
+        // Energy-gated response: when energy < 0.1 and not urgent, defer
+        const isUrgent = /\b(help|emergency|urgent|please|now)\b/i.test(decision.content);
+        if (selfState.energy < 0.1 && !isUrgent && this.energyDeferralCount < 3) {
+          this.energyDeferralCount++;
+          this.selfState.nudge('energy', 0.01); // Passive recovery
+          this.debugInfo = 'Low energy — deferring response';
+          this.status = 'idle';
+          return;
+        }
+
         this.waitingForClaude = true;
         this.status = 'waiting';
 
-        // Store user input to memory — emotional content gets higher significance
+        // Store user input to memory
         const hasEmotionalContent = /\b(died|dead|death|grief|loss|lost|sad|cry|happy|love|angry|afraid|scared|hurt|pain|miss|passed away|funeral|mourn)\b/i.test(decision.content);
         this.emit('memory-significance', {
           content: decision.content,
@@ -149,6 +170,9 @@ export class ArbiterEngine extends Engine {
           ? stream.slice(-5).map(e => `[${e.flavor}] ${e.text}`)
           : undefined;
 
+        // Compute energy/arousal-modulated response style
+        const responseStyle = this.computeResponseStyle(selfState);
+
         // Request Claude thinking via server — pack in enriched context
         const actionDecision: ActionDecision = {
           action: 'respond',
@@ -162,19 +186,19 @@ export class ArbiterEngine extends Engine {
           detectedEmotions: this.latestDetectedEmotions,
           strategicPriority: this.latestStrategicPriority,
           recentInnerThoughts,
+          responseStyle,
         };
 
         this.emit('thought', actionDecision, {
           priority: SIGNAL_PRIORITIES.HIGH,
         });
 
-        // Also boost engagement-related states
+        // Boost engagement-related states
         this.selfState.nudge('confidence', 0.02);
         this.selfState.nudge('energy', -0.01);
 
         this.debugInfo = `Thinking about: "${decision.content.slice(0, 25)}..."`;
       } else {
-        // Simple observation, no response needed
         this.status = 'idle';
         this.debugInfo = 'Observing...';
       }
@@ -183,5 +207,24 @@ export class ArbiterEngine extends Engine {
     } else {
       this.status = 'idle';
     }
+  }
+
+  private computeResponseStyle(selfState: SelfState): ResponseStyle {
+    // Energy modulates response length
+    let maxTokens = 300;
+    if (selfState.energy < 0.3) maxTokens = 150;
+    else if (selfState.energy > 0.7) maxTokens = 400;
+
+    // Arousal modulates urgency
+    let urgency: ResponseStyle['urgency'] = 'normal';
+    if (selfState.arousal > 0.6) urgency = 'high';
+    else if (selfState.arousal < 0.2) urgency = 'low';
+
+    // Valence + energy modulate tone
+    let tone: ResponseStyle['tone'] = 'neutral';
+    if (selfState.valence > 0.3 && selfState.energy > 0.5) tone = 'energetic';
+    else if (selfState.energy < 0.3 || selfState.valence < -0.2) tone = 'gentle';
+
+    return { maxTokens, urgency, tone };
   }
 }

@@ -17,9 +17,26 @@ interface AttentionFocus {
   timestamp: number;
 }
 
+// Simple hash for content deduplication
+function contentHash(s: string): string {
+  let h = 0;
+  for (let i = 0; i < s.length; i++) {
+    h = ((h << 5) - h + s.charCodeAt(i)) | 0;
+  }
+  return String(h);
+}
+
+// Words that carry emotional weight for valence-congruent boosting
+const EMOTIONAL_WORDS = /\b(died|death|grief|loss|lost|sad|cry|hurt|pain|miss|love|hate|afraid|scared|angry|happy|joy|beautiful|terrible|wonderful|awful)\b/i;
+
 export class AttentionEngine extends Engine {
   private focusHistory: AttentionFocus[] = [];
   private currentFocus: AttentionFocus | null = null;
+
+  // Novelty map: content hash → last-seen timestamp (for habituation)
+  private noveltyMap = new Map<string, number>();
+  private readonly NOVELTY_DECAY = 30000; // 30s before content feels novel again
+  private readonly MAX_NOVELTY_ENTRIES = 100;
 
   constructor() {
     super(ENGINE_IDS.ATTENTION);
@@ -58,15 +75,53 @@ export class AttentionEngine extends Engine {
 
     if (perceptions.length === 0) return;
 
-    // Select highest salience perception
     const selfState = this.selfState.get();
-    const scored = perceptions.map(p => ({
-      ...p,
-      score: p.salience * (1 + selfState.curiosity * 0.3) * (1 + selfState.arousal * 0.2),
-    }));
-    scored.sort((a, b) => b.score - a.score);
+    const now = Date.now();
 
-    const winner = scored[0];
+    // Dynamic attention threshold: high arousal → only high-salience items pass
+    const attentionThreshold = 0.2 + selfState.arousal * 0.4;
+
+    const scored = perceptions.map(p => {
+      let score = p.salience;
+
+      // Habituation: repeated content loses salience
+      const hash = contentHash(p.content);
+      const lastSeen = this.noveltyMap.get(hash);
+      if (lastSeen && now - lastSeen < this.NOVELTY_DECAY) {
+        const recencyFactor = (now - lastSeen) / this.NOVELTY_DECAY;
+        score *= 0.3 + 0.7 * recencyFactor;
+      }
+      this.noveltyMap.set(hash, now);
+      if (this.noveltyMap.size > this.MAX_NOVELTY_ENTRIES) {
+        const entries = [...this.noveltyMap.entries()];
+        entries.sort((a, b) => a[1] - b[1]);
+        for (let i = 0; i < entries.length - this.MAX_NOVELTY_ENTRIES; i++) {
+          this.noveltyMap.delete(entries[i][0]);
+        }
+      }
+
+      // Valence-congruent salience boost: negative valence → emotional content gets +0.15
+      if (selfState.valence < -0.1 && EMOTIONAL_WORDS.test(p.content)) {
+        score += 0.15;
+      }
+
+      // Existing curiosity and arousal modulation
+      score *= (1 + selfState.curiosity * 0.3) * (1 + selfState.arousal * 0.2);
+
+      return { ...p, score };
+    });
+
+    // Filter by dynamic threshold
+    const passing = scored.filter(p => p.score >= attentionThreshold);
+    if (passing.length === 0) {
+      this.debugInfo = `Filtered: all below threshold (${attentionThreshold.toFixed(2)})`;
+      this.status = 'idle';
+      return;
+    }
+
+    passing.sort((a, b) => b.score - a.score);
+
+    const winner = passing[0];
     this.currentFocus = {
       content: winner.content,
       modality: winner.type,
@@ -91,7 +146,7 @@ export class AttentionEngine extends Engine {
       priority: SIGNAL_PRIORITIES.MEDIUM,
     });
 
-    this.debugInfo = `Focus: "${winner.content.slice(0, 25)}..." (${winner.salience.toFixed(2)})`;
+    this.debugInfo = `Focus: "${winner.content.slice(0, 25)}..." (${winner.score.toFixed(2)}, thr:${attentionThreshold.toFixed(2)})`;
     this.status = 'idle';
   }
 

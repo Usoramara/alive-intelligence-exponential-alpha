@@ -9,6 +9,10 @@ interface AttentionFocus {
   salience: number;
 }
 
+// Words associated with positive/negative mood for congruent recall boosting
+const NEGATIVE_WORDS = /\b(sad|lost|pain|hurt|died|death|grief|miss|lonely|afraid|angry|broken|failed|regret)\b/i;
+const POSITIVE_WORDS = /\b(happy|joy|love|beautiful|grateful|wonderful|kind|warm|hope|bright|success|proud)\b/i;
+
 export class MemoryEngine extends Engine {
   private recentRecalls: MemoryRecord[] = [];
   private lastHaikuRecall = 0;
@@ -29,7 +33,7 @@ export class MemoryEngine extends Engine {
         this.recall(focus.content, focus.salience);
       } else if (signal.type === 'memory-query') {
         const query = signal.payload as { query: string };
-        this.recall(query.query, 0.6); // memory-query implies moderate salience
+        this.recall(query.query, 0.6);
       }
     }
   }
@@ -42,22 +46,27 @@ export class MemoryEngine extends Engine {
       this.recentRecalls = results;
 
       if (results.length > 0) {
+        // Mood-congruent re-ranking: boost memories matching current emotional state
+        const selfState = this.selfState.get();
+        const rankedResults = this.moodCongruentRerank(results, selfState.valence);
+
         this.emit('memory-result', {
-          items: results.map(r => r.content),
-          records: results,
+          items: rankedResults.map(r => r.content),
+          records: rankedResults,
         }, {
           target: [ENGINE_IDS.BINDER, ENGINE_IDS.IMAGINATION, ENGINE_IDS.DEFAULT_MODE, ENGINE_IDS.ARBITER],
           priority: SIGNAL_PRIORITIES.MEDIUM,
         });
 
-        this.debugInfo = `Recalled ${results.length} memories`;
+        this.debugInfo = `Recalled ${rankedResults.length} memories (mood-ranked)`;
       } else {
         this.debugInfo = 'No memories found';
       }
 
-      // Fire-and-forget Haiku semantic recall for high-salience queries
+      // Gate Haiku semantic recall on energy > 0.2 (low energy → skip expensive API call)
+      const selfState = this.selfState.get();
       const now = Date.now();
-      if (salience > 0.5 && now - this.lastHaikuRecall > this.haikuCooldown) {
+      if (salience > 0.5 && selfState.energy > 0.2 && now - this.lastHaikuRecall > this.haikuCooldown) {
         this.lastHaikuRecall = now;
         this.recallWithHaiku(query);
       }
@@ -66,6 +75,25 @@ export class MemoryEngine extends Engine {
     }
 
     this.status = 'idle';
+  }
+
+  private moodCongruentRerank(results: MemoryRecord[], valence: number): MemoryRecord[] {
+    if (Math.abs(valence) < 0.15) return results; // Near-neutral: no re-ranking
+
+    const scored = results.map(r => {
+      let boost = 0;
+      if (valence < -0.15) {
+        // Sad mood → boost negative-word memories
+        if (NEGATIVE_WORDS.test(r.content)) boost += 0.2;
+      } else if (valence > 0.15) {
+        // Happy mood → boost positive-word memories
+        if (POSITIVE_WORDS.test(r.content)) boost += 0.2;
+      }
+      return { record: r, score: (r.significance ?? 0.5) + boost };
+    });
+
+    scored.sort((a, b) => b.score - a.score);
+    return scored.map(s => s.record);
   }
 
   private async recallWithHaiku(query: string): Promise<void> {

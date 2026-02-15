@@ -237,25 +237,29 @@ export class DefaultModeEngine extends Engine {
   private getEmotionDrivenThought(): { thought: string; flavor: StreamEntry['flavor'] } {
     const state = this.selfState.get();
 
-    // Pick pool based on dominant state dimension
-    if (state.valence < -0.2) {
-      const pool = PROCESSING_THOUGHTS;
-      return { thought: pool[Math.floor(Math.random() * pool.length)], flavor: 'emotional' };
-    }
-    if (state.curiosity > 0.6) {
-      const pool = CURIOUS_THOUGHTS;
-      return { thought: pool[Math.floor(Math.random() * pool.length)], flavor: 'curiosity' };
-    }
-    if (state.valence > 0.5) {
-      const pool = WARM_THOUGHTS;
-      return { thought: pool[Math.floor(Math.random() * pool.length)], flavor: 'reflection' };
-    }
-    if (state.energy < 0.3) {
-      const pool = DREAMY_THOUGHTS;
-      return { thought: pool[Math.floor(Math.random() * pool.length)], flavor: 'wandering' };
+    // Weighted random pool selection: each pool gets a weight from its
+    // corresponding state dimension instead of threshold-based first-match
+    const pools: Array<{ pool: string[]; flavor: StreamEntry['flavor']; weight: number }> = [
+      { pool: PROCESSING_THOUGHTS, flavor: 'emotional', weight: Math.max(0, -state.valence) },
+      { pool: CURIOUS_THOUGHTS, flavor: 'curiosity', weight: state.curiosity },
+      { pool: WARM_THOUGHTS, flavor: 'reflection', weight: Math.max(0, state.valence) },
+      { pool: DREAMY_THOUGHTS, flavor: 'wandering', weight: Math.max(0, 1 - state.energy) },
+      { pool: WANDERING_THOUGHTS, flavor: 'wandering', weight: 0.3 }, // baseline
+    ];
+
+    // Weighted random selection
+    const totalWeight = pools.reduce((sum, p) => sum + p.weight, 0);
+    let roll = Math.random() * totalWeight;
+
+    for (const entry of pools) {
+      roll -= entry.weight;
+      if (roll <= 0) {
+        const thought = entry.pool[Math.floor(Math.random() * entry.pool.length)];
+        return { thought, flavor: entry.flavor };
+      }
     }
 
-    // Default: wandering
+    // Fallback
     const pool = WANDERING_THOUGHTS;
     return { thought: pool[Math.floor(Math.random() * pool.length)], flavor: 'wandering' };
   }

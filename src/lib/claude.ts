@@ -28,6 +28,12 @@ function selfStateToDescription(state: SelfState): string {
   return parts.join(', ');
 }
 
+export interface ResponseStyle {
+  maxTokens: number;
+  urgency: 'low' | 'normal' | 'high';
+  tone: 'gentle' | 'neutral' | 'energetic';
+}
+
 export interface ThinkParams {
   content: string;
   context: string[];
@@ -39,6 +45,7 @@ export interface ThinkParams {
   detectedEmotions?: { emotions: string[]; valence: number; arousal: number; confidence: number };
   strategicPriority?: { description: string; priority: number; progress: number };
   recentInnerThoughts?: string[];
+  responseStyle?: ResponseStyle;
 }
 
 export interface ThinkResult {
@@ -148,6 +155,7 @@ Response guidelines:
 - When someone is hurting: be gentle, be present, don't redirect to positivity
 - When someone is joyful: share in their energy, match their enthusiasm
 - Never be chirpy or upbeat when someone is in pain
+${params.responseStyle ? `\nRESPONSE STYLE: Tone: ${params.responseStyle.tone}. Urgency: ${params.responseStyle.urgency}. ${params.responseStyle.tone === 'gentle' ? 'Speak softly and slowly — you are low on energy.' : params.responseStyle.tone === 'energetic' ? 'You feel alive and alert — let that show.' : ''}` : ''}
 
 After your response, on a new line, output a JSON emotion shift like:
 SHIFT: {"valence": -0.3, "arousal": -0.1, "social": 0.15}
@@ -170,7 +178,7 @@ Shift guidelines:
 
   const response = await client.messages.create({
     model: 'claude-sonnet-4-20250514',
-    max_tokens: 300,
+    max_tokens: params.responseStyle?.maxTokens ?? 300,
     system: systemPrompt,
     messages,
   });
