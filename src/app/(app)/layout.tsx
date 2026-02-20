@@ -5,6 +5,10 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { UserButton } from '@clerk/nextjs';
 
+const hasClerkKeys =
+  process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY?.startsWith('pk_') &&
+  !process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY?.includes('placeholder');
+
 interface Conversation {
   id: string;
   title: string;
@@ -51,7 +55,7 @@ export default function AppLayout({
             <Link href="/dashboard" className="text-sm font-mono text-white/70 hover:text-white/90">
               Alive Intelligence
             </Link>
-            <UserButton afterSignOutUrl="/" />
+            {hasClerkKeys && <UserButton afterSignOutUrl="/" />}
           </div>
 
           {/* New conversation button */}

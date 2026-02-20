@@ -8,6 +8,11 @@ const geistMono = Geist_Mono({
   subsets: ["latin"],
 });
 
+// Only use Clerk when real keys are configured
+const hasClerkKeys =
+  process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY?.startsWith('pk_') &&
+  !process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY?.includes('placeholder');
+
 export const metadata: Metadata = {
   title: "The Alive Intelligence",
   description: "Wybe's cognitive architecture — the mind itself, running in the browser",
@@ -18,13 +23,15 @@ export default function RootLayout({
 }: Readonly<{
   children: React.ReactNode;
 }>) {
-  return (
-    <ClerkProvider>
-      <html lang="en" className="dark">
-        <body className={`${geistMono.variable} antialiased`}>
-          {children}
-        </body>
-      </html>
-    </ClerkProvider>
+  const content = (
+    <html lang="en" className="dark">
+      <body className={`${geistMono.variable} antialiased`}>
+        {children}
+      </body>
+    </html>
   );
+
+  if (!hasClerkKeys) return content;
+
+  return <ClerkProvider>{content}</ClerkProvider>;
 }

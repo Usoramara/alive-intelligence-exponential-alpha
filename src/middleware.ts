@@ -1,6 +1,11 @@
-import { clerkMiddleware, createRouteMatcher } from '@clerk/nextjs/server';
 import { NextResponse } from 'next/server';
 import type { NextRequest } from 'next/server';
+
+// Check if Clerk keys are properly configured
+const hasClerkKeys =
+  process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY?.startsWith('pk_') &&
+  process.env.CLERK_SECRET_KEY?.startsWith('sk_') &&
+  !process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY?.includes('placeholder');
 
 // Rate limiting (per-user when authenticated, per-IP when not)
 const WINDOW_MS = 60_000;
@@ -56,33 +61,55 @@ function rateLimit(key: string, maxRequests: number): NextResponse | null {
   return null;
 }
 
-// Public routes that don't require auth
-const isPublicRoute = createRouteMatcher([
-  '/',
-  '/sign-in(.*)',
-  '/sign-up(.*)',
-  '/api/webhooks(.*)',
-]);
+// Dev-mode middleware (no Clerk)
+function devMiddleware(request: NextRequest): NextResponse {
+  const isApiRoute = request.nextUrl.pathname.startsWith('/api/mind') ||
+    request.nextUrl.pathname.startsWith('/api/user');
 
-// API routes that need rate limiting
-const isApiRoute = createRouteMatcher(['/api/mind(.*)', '/api/user(.*)']);
-
-export default clerkMiddleware(async (auth, request) => {
-  const { userId } = await auth();
-
-  // Rate limiting for API routes
-  if (isApiRoute(request)) {
-    const rateLimitKey = userId ?? `ip:${getClientIp(request as NextRequest)}`;
-    const maxRequests = userId ? MAX_REQUESTS_AUTHENTICATED : MAX_REQUESTS_FREE;
-    const rateLimitResponse = rateLimit(rateLimitKey, maxRequests);
+  if (isApiRoute) {
+    const rateLimitKey = `ip:${getClientIp(request)}`;
+    const rateLimitResponse = rateLimit(rateLimitKey, MAX_REQUESTS_FREE);
     if (rateLimitResponse) return rateLimitResponse;
   }
 
-  // Protect non-public routes
-  if (!isPublicRoute(request)) {
-    await auth.protect();
-  }
-});
+  return NextResponse.next();
+}
+
+// Dynamically export middleware based on Clerk availability
+let middleware: (request: NextRequest) => NextResponse | Promise<NextResponse>;
+
+if (hasClerkKeys) {
+  // Use dynamic import pattern — Clerk middleware loaded only when keys exist
+  const { clerkMiddleware, createRouteMatcher } = await import('@clerk/nextjs/server');
+
+  const isPublicRoute = createRouteMatcher([
+    '/',
+    '/sign-in(.*)',
+    '/sign-up(.*)',
+    '/api/webhooks(.*)',
+  ]);
+
+  const isApiRoute = createRouteMatcher(['/api/mind(.*)', '/api/user(.*)']);
+
+  middleware = clerkMiddleware(async (auth, request) => {
+    const { userId } = await auth();
+
+    if (isApiRoute(request)) {
+      const rateLimitKey = userId ?? `ip:${getClientIp(request as NextRequest)}`;
+      const maxRequests = userId ? MAX_REQUESTS_AUTHENTICATED : MAX_REQUESTS_FREE;
+      const rateLimitResponse = rateLimit(rateLimitKey, maxRequests);
+      if (rateLimitResponse) return rateLimitResponse;
+    }
+
+    if (!isPublicRoute(request)) {
+      await auth.protect();
+    }
+  }) as unknown as typeof middleware;
+} else {
+  middleware = devMiddleware;
+}
+
+export default middleware;
 
 export const config = {
   matcher: [
