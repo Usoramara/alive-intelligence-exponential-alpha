@@ -84,7 +84,7 @@ export const memories = pgTable(
     content: text('content').notNull(),
     significance: real('significance').notNull().default(0.5),
     tags: text('tags').array(),
-    embedding: vector('embedding', { dimensions: 1536 }), // text-embedding-3-small
+    embedding: vector('embedding', { dimensions: 384 }), // all-MiniLM-L6-v2 (local)
     createdAt: timestamp('created_at').defaultNow().notNull(),
   },
   (t) => [index('memories_user_idx').on(t.userId)],

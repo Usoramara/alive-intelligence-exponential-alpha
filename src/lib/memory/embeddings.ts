@@ -1,34 +1,33 @@
-import OpenAI from 'openai';
+import { pipeline } from '@huggingface/transformers';
 
-let client: OpenAI | null = null;
+const MODEL = 'Xenova/all-MiniLM-L6-v2'; // 384 dimensions, runs locally
+export const EMBEDDING_DIMENSIONS = 384;
 
-function getClient(): OpenAI {
-  if (!client) {
-    client = new OpenAI();
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+let extractor: any = null;
+
+async function getExtractor() {
+  if (!extractor) {
+    extractor = await pipeline('feature-extraction', MODEL, {
+      dtype: 'fp32',
+    });
   }
-  return client;
+  return extractor;
 }
 
-const MODEL = 'text-embedding-3-small'; // 1536 dimensions, $0.02/1M tokens
-
 export async function embed(text: string): Promise<number[]> {
-  const response = await getClient().embeddings.create({
-    model: MODEL,
-    input: text,
-  });
-  return response.data[0].embedding;
+  const ext = await getExtractor();
+  const output = await ext(text, { pooling: 'mean', normalize: true });
+  return Array.from(output.data as Float32Array);
 }
 
 export async function embedBatch(texts: string[]): Promise<number[][]> {
   if (texts.length === 0) return [];
   if (texts.length === 1) return [await embed(texts[0])];
 
-  // OpenAI supports up to 2048 inputs per batch
-  const response = await getClient().embeddings.create({
-    model: MODEL,
-    input: texts,
-  });
-  return response.data
-    .sort((a, b) => a.index - b.index)
-    .map(d => d.embedding);
+  const results: number[][] = [];
+  for (const text of texts) {
+    results.push(await embed(text));
+  }
+  return results;
 }
