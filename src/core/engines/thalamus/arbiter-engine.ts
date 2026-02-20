@@ -1,39 +1,7 @@
 import { Engine } from '../../engine';
 import { ENGINE_IDS, SIGNAL_PRIORITIES } from '../../constants';
-import type { Signal, SignalType, SelfState } from '../../types';
-
-interface BoundRepresentation {
-  content: string;
-  context: string[];
-  selfState: SelfState;
-  timestamp: number;
-  needsClaude: boolean;
-}
-
-interface ResponseStyle {
-  maxTokens: number;
-  urgency: 'low' | 'normal' | 'high';
-  tone: 'gentle' | 'neutral' | 'energetic';
-}
-
-interface ActionDecision {
-  action: 'respond' | 'think' | 'observe' | 'wait';
-  content: string;
-  context: string[];
-  selfState: SelfState;
-  timestamp: number;
-  empathicState?: { mirroring: string; coupling: number; resonance: string };
-  tomInference?: { theyFeel: string; theyWant: string; theyBelieve: string };
-  recentMemories?: string[];
-  detectedEmotions?: { emotions: string[]; valence: number; arousal: number; confidence: number };
-  strategicPriority?: { description: string; priority: number; progress: number };
-  recentInnerThoughts?: string[];
-  responseStyle?: ResponseStyle;
-  workingMemorySummary?: string;
-  discourseContext?: { currentTopic: string | null; openQuestions: string[]; commitments: string[] };
-  metacognitionContext?: { uncertainty: number; processingLoad: number; emotionalRegulation: string | null };
-  useLite?: boolean;
-}
+import { isSignal } from '../../types';
+import type { Signal, SignalType, SelfState, BoundRepresentation, ResponseStyle, ActionDecision } from '../../types';
 
 export class ArbiterEngine extends Engine {
   private pendingDecisions: BoundRepresentation[] = [];
@@ -79,13 +47,13 @@ export class ArbiterEngine extends Engine {
 
   protected process(signals: Signal[]): void {
     for (const signal of signals) {
-      if (signal.type === 'bound-representation') {
-        this.pendingDecisions.push(signal.payload as BoundRepresentation);
-      } else if (signal.type === 'claude-response') {
+      if (isSignal(signal, 'bound-representation')) {
+        this.pendingDecisions.push(signal.payload);
+      } else if (isSignal(signal, 'claude-response')) {
         this.waitingForClaude = false;
         this.pendingDecisions = [];
         this.energyDeferralCount = 0; // Reset deferral count on successful response
-        const response = signal.payload as { text: string; emotionShift?: Partial<SelfState> };
+        const response = signal.payload;
 
         // Apply emotion shift from Claude's reasoning
         if (response.emotionShift) {
@@ -122,33 +90,31 @@ export class ArbiterEngine extends Engine {
 
         this.debugInfo = `Response: "${response.text.slice(0, 30)}..."`;
         this.lastResponseTime = Date.now();
-      } else if (signal.type === 'value-violation') {
+      } else if (isSignal(signal, 'value-violation')) {
         this.pendingDecisions = [];
         this.debugInfo = 'Value violation — suppressed';
-      } else if (signal.type === 'safety-alert') {
+      } else if (isSignal(signal, 'safety-alert')) {
         this.pendingDecisions = [];
         this.waitingForClaude = false;
         this.debugInfo = 'Safety override';
-      } else if (signal.type === 'tom-inference') {
-        this.latestTomInference = signal.payload as typeof this.latestTomInference;
-      } else if (signal.type === 'emotion-detected') {
-        this.latestDetectedEmotions = signal.payload as typeof this.latestDetectedEmotions;
-      } else if (signal.type === 'memory-result') {
-        const memPayload = signal.payload as { items: string[] };
-        this.latestMemoryResults = memPayload.items ?? [];
-      } else if (signal.type === 'empathic-state') {
-        this.latestEmpathicState = signal.payload as typeof this.latestEmpathicState;
-      } else if (signal.type === 'strategy-update') {
-        const strategy = signal.payload as { currentPriority: { description: string; priority: number; progress: number } };
-        this.latestStrategicPriority = strategy.currentPriority;
-      } else if (signal.type === 'working-memory-update') {
-        this.latestWorkingMemory = signal.payload as typeof this.latestWorkingMemory;
-      } else if (signal.type === 'discourse-state') {
-        this.latestDiscourse = signal.payload as typeof this.latestDiscourse;
-      } else if (signal.type === 'metacognition-update') {
-        this.latestMetacognition = signal.payload as typeof this.latestMetacognition;
-      } else if (signal.type === 'resource-budget') {
-        this.latestResourceBudget = signal.payload as typeof this.latestResourceBudget;
+      } else if (isSignal(signal, 'tom-inference')) {
+        this.latestTomInference = signal.payload;
+      } else if (isSignal(signal, 'emotion-detected')) {
+        this.latestDetectedEmotions = signal.payload;
+      } else if (isSignal(signal, 'memory-result')) {
+        this.latestMemoryResults = signal.payload.items ?? [];
+      } else if (isSignal(signal, 'empathic-state')) {
+        this.latestEmpathicState = signal.payload;
+      } else if (isSignal(signal, 'strategy-update')) {
+        this.latestStrategicPriority = signal.payload.currentPriority;
+      } else if (isSignal(signal, 'working-memory-update')) {
+        this.latestWorkingMemory = signal.payload;
+      } else if (isSignal(signal, 'discourse-state')) {
+        this.latestDiscourse = signal.payload;
+      } else if (isSignal(signal, 'metacognition-update')) {
+        this.latestMetacognition = signal.payload;
+      } else if (isSignal(signal, 'resource-budget')) {
+        this.latestResourceBudget = signal.payload;
       }
     }
 

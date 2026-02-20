@@ -1,5 +1,6 @@
 import { Engine } from '../../engine';
 import { ENGINE_IDS, SIGNAL_PRIORITIES } from '../../constants';
+import { isSignal } from '../../types';
 import type { Signal, SignalType } from '../../types';
 
 interface ResourceBudget {
@@ -36,18 +37,18 @@ export class ResourceManagerEngine extends Engine {
     const now = Date.now();
 
     for (const signal of signals) {
-      if (signal.type === 'claude-response') {
+      if (isSignal(signal, 'claude-response')) {
         // Track Sonnet call (main think endpoint uses Sonnet)
         this.callHistory.push({ timestamp: now, model: 'sonnet' });
       }
 
-      if (signal.type === 'prediction-error') {
-        const error = signal.payload as { surpriseLevel: number };
+      if (isSignal(signal, 'prediction-error')) {
+        const error = signal.payload;
         this.latestSurprise = error.surpriseLevel;
       }
 
-      if (signal.type === 'metacognition-update') {
-        const meta = signal.payload as { processingLoad: number };
+      if (isSignal(signal, 'metacognition-update')) {
+        const meta = signal.payload;
         this.latestProcessingLoad = meta.processingLoad;
       }
     }

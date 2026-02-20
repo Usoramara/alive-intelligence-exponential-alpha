@@ -1,6 +1,7 @@
 import { Engine } from '../../engine';
 import { ENGINE_IDS, SIGNAL_PRIORITIES } from '../../constants';
 import type { Signal, SignalType } from '../../types';
+import { isSignal } from '../../types';
 
 interface PerceptionResult {
   type: string;
@@ -47,9 +48,9 @@ export class EmotionInferenceEngine extends Engine {
 
   protected process(signals: Signal[]): void {
     for (const signal of signals) {
-      if (signal.type !== 'perception-result') continue;
+      if (!isSignal(signal, 'perception-result')) continue;
 
-      const perception = signal.payload as PerceptionResult;
+      const perception = signal.payload as unknown as PerceptionResult;
       if (perception.type !== 'text') continue;
 
       const detection = this.detectEmotions(perception.content);

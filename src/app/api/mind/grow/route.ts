@@ -1,27 +1,13 @@
-import { NextResponse } from 'next/server';
-import Anthropic from '@anthropic-ai/sdk';
+import { getAnthropicClient } from '@/lib/anthropic';
+import { createApiHandler } from '@/lib/api-handler';
+import { growParamsSchema } from '@/lib/schemas';
 import { extractJSON } from '@/lib/extract-json';
 
-const client = new Anthropic();
+const client = getAnthropicClient();
 
-interface Exchange {
-  role: 'user' | 'assistant';
-  content: string;
-}
-
-interface EmotionalTrajectory {
-  start: number;
-  end: number;
-  peaks: string[];
-}
-
-export async function POST(request: Request) {
-  try {
-    const { exchanges, emotionalTrajectory } = (await request.json()) as {
-      exchanges: Exchange[];
-      emotionalTrajectory: EmotionalTrajectory;
-    };
-
+export const POST = createApiHandler({
+  schema: growParamsSchema,
+  handler: async ({ exchanges, emotionalTrajectory }) => {
     const conversationSummary = exchanges
       .map(e => `${e.role === 'user' ? 'User' : 'Wybe'}: ${e.content}`)
       .join('\n');
@@ -58,13 +44,6 @@ Analyze this conversation:`,
       .map(b => b.text)
       .join('');
 
-    const result = JSON.parse(extractJSON(responseText));
-    return NextResponse.json(result);
-  } catch (error) {
-    console.error('Grow API error:', error);
-    return NextResponse.json(
-      { error: 'Failed to grow', details: String(error) },
-      { status: 500 }
-    );
-  }
-}
+    return JSON.parse(extractJSON(responseText));
+  },
+});

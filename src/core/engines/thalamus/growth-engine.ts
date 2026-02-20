@@ -1,5 +1,6 @@
 import { Engine } from '../../engine';
 import { ENGINE_IDS, SIGNAL_PRIORITIES } from '../../constants';
+import { isSignal } from '../../types';
 import type { Signal, SignalType } from '../../types';
 
 interface ConversationExchange {
@@ -28,8 +29,8 @@ export class GrowthEngine extends Engine {
 
   protected process(signals: Signal[]): void {
     for (const signal of signals) {
-      if (signal.type === 'bound-representation') {
-        const bound = signal.payload as { content: string; needsClaude: boolean };
+      if (isSignal(signal, 'bound-representation')) {
+        const bound = signal.payload;
         if (bound.needsClaude && bound.content.length > 0) {
           // Track user message
           if (this.exchanges.length === 0) {
@@ -42,8 +43,8 @@ export class GrowthEngine extends Engine {
           });
           this.lastExchangeTime = Date.now();
         }
-      } else if (signal.type === 'claude-response') {
-        const response = signal.payload as { text: string };
+      } else if (isSignal(signal, 'claude-response')) {
+        const response = signal.payload;
         if (response.text) {
           this.exchanges.push({
             role: 'assistant',
@@ -52,8 +53,8 @@ export class GrowthEngine extends Engine {
           });
           this.lastExchangeTime = Date.now();
         }
-      } else if (signal.type === 'emotion-detected') {
-        const emotions = signal.payload as { emotions: string[] };
+      } else if (isSignal(signal, 'emotion-detected')) {
+        const emotions = signal.payload;
         if (emotions.emotions) {
           for (const e of emotions.emotions) {
             if (!this.emotionalPeaks.includes(e)) {

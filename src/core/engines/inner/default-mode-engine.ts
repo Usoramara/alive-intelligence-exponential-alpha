@@ -1,6 +1,7 @@
 import { Engine } from '../../engine';
 import { ENGINE_IDS, SIGNAL_PRIORITIES } from '../../constants';
 import type { Signal, SignalType, StreamEntry, DrivePulse } from '../../types';
+import { isSignal } from '../../types';
 
 // ── Template Pools (fallback only) ──
 
@@ -119,16 +120,16 @@ export class DefaultModeEngine extends Engine {
 
   protected process(signals: Signal[]): void {
     for (const signal of signals) {
-      if (signal.type === 'memory-result') {
-        const memPayload = signal.payload as { items: string[] };
+      if (isSignal(signal, 'memory-result')) {
+        const memPayload = signal.payload;
         if (memPayload.items) {
           this.recentMemories = [
             ...memPayload.items,
             ...this.recentMemories,
           ].slice(0, 10);
         }
-      } else if (signal.type === 'drive-pulse') {
-        const drive = signal.payload as DrivePulse;
+      } else if (isSignal(signal, 'drive-pulse')) {
+        const drive = signal.payload;
         this.nextFlavorHint = driveToFlavor(drive.drive);
       }
     }

@@ -1,4 +1,5 @@
 import type { EngineId, Zone } from './constants';
+import type { SignalPayloadMap } from './signal-payloads';
 
 // ── Signal Types ──
 
@@ -73,15 +74,23 @@ export type SignalType =
   | 'persist-state'
   | 'state-restored';
 
-export interface Signal<T = unknown> {
+export interface Signal<T extends SignalType = SignalType> {
   id: string;
-  type: SignalType;
+  type: T;
   source: EngineId;
   target?: EngineId | EngineId[];  // undefined = broadcast
-  payload: T;
+  payload: T extends keyof SignalPayloadMap ? SignalPayloadMap[T] : unknown;
   priority: number;
   timestamp: number;
   ttl: number;  // ms until expiry
+}
+
+// Type guard for narrowing signal payloads
+export function isSignal<T extends SignalType>(
+  signal: Signal,
+  type: T,
+): signal is Signal<T> {
+  return signal.type === type;
 }
 
 // ── Consciousness Stream ──
@@ -174,6 +183,62 @@ export interface Subscription {
   engineId: EngineId;
   signalTypes?: SignalType[];
   handler: SignalHandler;
+}
+
+// ── Shared Engine Interfaces ──
+
+export interface BoundRepresentation {
+  content: string;
+  context: string[];
+  selfState: SelfState;
+  timestamp: number;
+  needsClaude: boolean;
+}
+
+export interface ResponseStyle {
+  maxTokens: number;
+  urgency: 'low' | 'normal' | 'high';
+  tone: 'gentle' | 'neutral' | 'energetic';
+}
+
+export interface ActionDecision {
+  action: 'respond' | 'think' | 'observe' | 'wait';
+  content: string;
+  context: string[];
+  selfState: SelfState;
+  timestamp: number;
+  empathicState?: { mirroring: string; coupling: number; resonance: string };
+  tomInference?: { theyFeel: string; theyWant: string; theyBelieve: string };
+  recentMemories?: string[];
+  detectedEmotions?: { emotions: string[]; valence: number; arousal: number; confidence: number };
+  strategicPriority?: { description: string; priority: number; progress: number };
+  recentInnerThoughts?: string[];
+  responseStyle?: ResponseStyle;
+  workingMemorySummary?: string;
+  discourseContext?: { currentTopic: string | null; openQuestions: string[]; commitments: string[] };
+  metacognitionContext?: { uncertainty: number; processingLoad: number; emotionalRegulation: string | null };
+  useLite?: boolean;
+}
+
+export interface AttentionFocus {
+  content: string;
+  modality: string;
+  salience: number;
+  urgency: number;
+  timestamp: number;
+}
+
+export interface EmotionDetection {
+  emotions: string[];
+  valence: number;
+  arousal: number;
+  confidence: number;
+}
+
+export interface PerceptionResult {
+  description: string;
+  emotions?: { detected: string[]; confidence: number };
+  people?: Array<{ expression: string; estimatedMood: string }>;
 }
 
 // ── Claude Integration ──

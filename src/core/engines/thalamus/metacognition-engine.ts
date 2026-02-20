@@ -1,5 +1,6 @@
 import { Engine } from '../../engine';
 import { ENGINE_IDS, SIGNAL_PRIORITIES } from '../../constants';
+import { isSignal } from '../../types';
 import type { Signal, SignalType, SelfState } from '../../types';
 
 interface HomeostaticBounds {
@@ -57,28 +58,28 @@ export class MetacognitionEngine extends Engine {
 
   protected process(signals: Signal[]): void {
     for (const signal of signals) {
-      if (signal.type === 'working-memory-update') {
-        const wm = signal.payload as { items: unknown[]; capacity: number };
+      if (isSignal(signal, 'working-memory-update')) {
+        const wm = signal.payload;
         this.state.processingLoad = Array.isArray(wm.items) ? wm.items.length / (wm.capacity || 7) : 0;
       }
 
-      if (signal.type === 'prediction-validated') {
-        const pred = signal.payload as { accuracy: number };
+      if (isSignal(signal, 'prediction-validated')) {
+        const pred = signal.payload;
         this.state.predictionAccuracy = pred.accuracy;
         this.state.uncertainty = Math.max(0, this.state.uncertainty - 0.05);
       }
 
-      if (signal.type === 'prediction-error') {
+      if (isSignal(signal, 'prediction-error')) {
         this.state.uncertainty = Math.min(1, this.state.uncertainty + 0.05);
       }
 
-      if (signal.type === 'claude-response') {
-        const response = signal.payload as { text: string };
+      if (isSignal(signal, 'claude-response')) {
+        const response = signal.payload;
         this.updateCoherence(response.text);
       }
 
-      if (signal.type === 'tom-inference') {
-        const tom = signal.payload as { confidence: number };
+      if (isSignal(signal, 'tom-inference')) {
+        const tom = signal.payload;
         // Low ToM confidence → higher uncertainty
         if (tom.confidence < 0.4) {
           this.state.uncertainty = Math.min(1, this.state.uncertainty + 0.03);

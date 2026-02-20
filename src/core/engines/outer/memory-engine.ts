@@ -1,13 +1,8 @@
 import { Engine } from '../../engine';
 import { ENGINE_IDS, SIGNAL_PRIORITIES } from '../../constants';
+import { isSignal } from '../../types';
 import type { Signal, SignalType } from '../../types';
 import { searchMemories, getMemories, type MemoryRecord } from '@/lib/indexed-db';
-
-interface AttentionFocus {
-  content: string;
-  modality: string;
-  salience: number;
-}
 
 // Words associated with positive/negative mood for congruent recall boosting
 const NEGATIVE_WORDS = /\b(sad|lost|pain|hurt|died|death|grief|miss|lonely|afraid|angry|broken|failed|regret)\b/i;
@@ -28,11 +23,11 @@ export class MemoryEngine extends Engine {
 
   protected process(signals: Signal[]): void {
     for (const signal of signals) {
-      if (signal.type === 'attention-focus') {
-        const focus = signal.payload as AttentionFocus;
+      if (isSignal(signal, 'attention-focus')) {
+        const focus = signal.payload;
         this.recall(focus.content, focus.salience);
-      } else if (signal.type === 'memory-query') {
-        const query = signal.payload as { query: string };
+      } else if (isSignal(signal, 'memory-query')) {
+        const query = signal.payload;
         this.recall(query.query, 0.6);
       }
     }

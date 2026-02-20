@@ -1,6 +1,7 @@
 import { Engine } from '../../engine';
 import { ENGINE_IDS, SIGNAL_PRIORITIES } from '../../constants';
-import type { Signal, SignalType, SelfState } from '../../types';
+import { isSignal } from '../../types';
+import type { Signal, SignalType, BoundRepresentation } from '../../types';
 
 interface DiscourseState {
   currentTopic: string | null;
@@ -8,13 +9,6 @@ interface DiscourseState {
   openQuestions: string[];
   commitments: string[];
   turnCount: number;
-}
-
-interface BoundRepresentation {
-  content: string;
-  context: string[];
-  selfState: SelfState;
-  timestamp: number;
 }
 
 export class DiscourseEngine extends Engine {
@@ -36,11 +30,11 @@ export class DiscourseEngine extends Engine {
 
   protected process(signals: Signal[]): void {
     for (const signal of signals) {
-      if (signal.type === 'bound-representation') {
-        const bound = signal.payload as BoundRepresentation;
+      if (isSignal(signal, 'bound-representation')) {
+        const bound = signal.payload;
         this.processUserInput(bound.content);
-      } else if (signal.type === 'claude-response') {
-        const response = signal.payload as { text: string };
+      } else if (isSignal(signal, 'claude-response')) {
+        const response = signal.payload;
         this.processSystemOutput(response.text);
       }
     }

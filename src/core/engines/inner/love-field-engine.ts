@@ -1,6 +1,7 @@
 import { Engine } from '../../engine';
 import { ENGINE_IDS, SIGNAL_PRIORITIES } from '../../constants';
 import type { Signal, SignalType, PersonState } from '../../types';
+import { isSignal } from '../../types';
 
 interface PersonStateUpdate {
   personId: string;
@@ -27,11 +28,11 @@ export class LoveFieldEngine extends Engine {
 
   protected process(signals: Signal[]): void {
     for (const signal of signals) {
-      if (signal.type === 'person-state-update') {
-        const update = signal.payload as PersonStateUpdate;
+      if (isSignal(signal, 'person-state-update')) {
+        const update = signal.payload as unknown as PersonStateUpdate;
         this.updateAttachment(update.personId, update.state);
-      } else if (signal.type === 'empathic-state') {
-        const empathy = signal.payload as { response: string; intensity: number };
+      } else if (isSignal(signal, 'empathic-state')) {
+        const empathy = signal.payload as unknown as { response: string; intensity: number };
         // Compassion strengthens attachment
         if (empathy.response === 'compassion') {
           const defaultPerson = this.attachments.get('human-0');

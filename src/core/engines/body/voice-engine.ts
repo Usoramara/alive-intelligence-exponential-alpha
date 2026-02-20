@@ -1,5 +1,6 @@
 import { Engine } from '../../engine';
 import { ENGINE_IDS } from '../../constants';
+import { isSignal } from '../../types';
 import type { Signal, SignalType } from '../../types';
 
 interface VoiceOutput {
@@ -33,8 +34,8 @@ export class VoiceEngine extends Engine {
 
   protected process(signals: Signal[]): void {
     for (const signal of signals) {
-      if (signal.type === 'voice-output') {
-        const payload = signal.payload as VoiceOutput;
+      if (isSignal(signal, 'voice-output')) {
+        const payload = signal.payload;
         this.outputHistory.push(payload);
 
         // Keep last 50 outputs

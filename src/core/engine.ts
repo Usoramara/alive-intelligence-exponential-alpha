@@ -79,7 +79,8 @@ export abstract class Engine {
   // Emit a signal onto the bus
   protected emit(
     type: SignalType,
-    payload: unknown,
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
+    payload: any,
     options?: { target?: EngineId | EngineId[]; priority?: number }
   ): Signal {
     return this.bus.emit({

@@ -1,22 +1,7 @@
 import { Engine } from '../../engine';
 import { ENGINE_IDS, SIGNAL_PRIORITIES } from '../../constants';
-import type { Signal, SignalType } from '../../types';
-
-interface AttentionFocus {
-  content: string;
-  modality: string;
-  salience: number;
-  urgency: number;
-  timestamp: number;
-}
-
-interface BoundRepresentation {
-  content: string;
-  context: string[];
-  selfState: ReturnType<typeof import('../../state').SelfStateManager.prototype.get>;
-  timestamp: number;
-  needsClaude: boolean;
-}
+import { isSignal } from '../../types';
+import type { Signal, SignalType, AttentionFocus, BoundRepresentation } from '../../types';
 
 export class BinderEngine extends Engine {
   private recentFoci: AttentionFocus[] = [];
@@ -34,12 +19,12 @@ export class BinderEngine extends Engine {
     let hasNewFocus = false;
 
     for (const signal of signals) {
-      if (signal.type === 'attention-focus') {
-        this.recentFoci.push(signal.payload as AttentionFocus);
+      if (isSignal(signal, 'attention-focus')) {
+        this.recentFoci.push(signal.payload);
         if (this.recentFoci.length > 5) this.recentFoci.shift();
         hasNewFocus = true;
-      } else if (signal.type === 'memory-result') {
-        const memories = signal.payload as { items: string[] };
+      } else if (isSignal(signal, 'memory-result')) {
+        const memories = signal.payload;
         this.memoryContext = memories.items || [];
       }
     }

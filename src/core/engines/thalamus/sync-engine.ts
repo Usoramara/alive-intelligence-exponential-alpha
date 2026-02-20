@@ -1,5 +1,6 @@
 import { Engine } from '../../engine';
 import { ENGINE_IDS } from '../../constants';
+import { isSignal } from '../../types';
 import type { Signal, SignalType } from '../../types';
 
 export class SyncEngine extends Engine {

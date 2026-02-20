@@ -1,6 +1,7 @@
 import { Engine } from '../../engine';
 import { ENGINE_IDS, SIGNAL_PRIORITIES } from '../../constants';
 import type { Signal, SignalType } from '../../types';
+import { isSignal } from '../../types';
 
 interface RollingStats {
   values: number[];
@@ -65,8 +66,8 @@ export class IntuitionEngine extends Engine {
   protected process(signals: Signal[]): void {
     for (const signal of signals) {
       // Track emotional valence from emotion detection
-      if (signal.type === 'emotion-detected') {
-        const emotions = signal.payload as { valence: number };
+      if (isSignal(signal, 'emotion-detected')) {
+        const emotions = signal.payload;
         pushStat(this.emotionalValences, emotions.valence);
         const vZ = zScore(this.emotionalValences, emotions.valence);
         if (Math.abs(vZ) > 2) {

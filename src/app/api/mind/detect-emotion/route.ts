@@ -1,16 +1,13 @@
-import { NextResponse } from 'next/server';
-import Anthropic from '@anthropic-ai/sdk';
+import { getAnthropicClient } from '@/lib/anthropic';
+import { createApiHandler } from '@/lib/api-handler';
+import { detectEmotionParamsSchema } from '@/lib/schemas';
 import { extractJSON } from '@/lib/extract-json';
 
-const client = new Anthropic();
+const client = getAnthropicClient();
 
-export async function POST(request: Request) {
-  try {
-    const { text, context } = (await request.json()) as {
-      text: string;
-      context?: string;
-    };
-
+export const POST = createApiHandler({
+  schema: detectEmotionParamsSchema,
+  handler: async ({ text, context }) => {
     const response = await client.messages.create({
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 150,
@@ -39,13 +36,6 @@ Consider sarcasm, context, implicit emotions, and tone. "Fine." after bad news =
       .map(b => b.text)
       .join('');
 
-    const result = JSON.parse(extractJSON(responseText));
-    return NextResponse.json(result);
-  } catch (error) {
-    console.error('Detect emotion API error:', error);
-    return NextResponse.json(
-      { error: 'Failed to detect emotions', details: String(error) },
-      { status: 500 }
-    );
-  }
-}
+    return JSON.parse(extractJSON(responseText));
+  },
+});

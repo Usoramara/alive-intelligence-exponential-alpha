@@ -1,15 +1,10 @@
 import { NextResponse } from 'next/server';
-import Anthropic from '@anthropic-ai/sdk';
+import { getAnthropicClient } from '@/lib/anthropic';
+import { createApiHandler } from '@/lib/api-handler';
+import { imagineRequestSchema } from '@/lib/schemas';
 import { extractJSON } from '@/lib/extract-json';
-import type { SelfState } from '@/core/types';
 
-const client = new Anthropic();
-
-interface ImagineRequest {
-  premise: string;
-  variations: Array<{ type: string; variation: string }>;
-  selfState: SelfState;
-}
+const client = getAnthropicClient();
 
 interface ImagineResult {
   scenario: string;
@@ -17,10 +12,9 @@ interface ImagineResult {
   type: string;
 }
 
-export async function POST(request: Request) {
-  try {
-    const body = (await request.json()) as ImagineRequest;
-
+export const POST = createApiHandler({
+  schema: imagineRequestSchema,
+  handler: async (body) => {
     const variationsStr = body.variations
       .map(v => `- [${v.type}]: ${v.variation}`)
       .join('\n');
@@ -62,12 +56,6 @@ Output JSON only:
       );
     }
 
-    return NextResponse.json(result);
-  } catch (error) {
-    console.error('Imagine API error:', error);
-    return NextResponse.json(
-      { error: 'Failed to imagine', details: String(error) },
-      { status: 500 },
-    );
-  }
-}
+    return result;
+  },
+});

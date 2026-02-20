@@ -1,6 +1,7 @@
 import { Engine } from '../../engine';
 import { ENGINE_IDS, SIGNAL_PRIORITIES } from '../../constants';
 import type { Signal, SignalType, PersonState } from '../../types';
+import { isSignal } from '../../types';
 
 interface EmotionDetection {
   emotions: string[];
@@ -28,7 +29,7 @@ export class PersonStateEngine extends Engine {
 
   protected process(signals: Signal[]): void {
     for (const signal of signals) {
-      if (signal.type === 'emotion-detected') {
+      if (isSignal(signal, 'emotion-detected')) {
         const detection = signal.payload as EmotionDetection;
         const person = this.getOrCreatePerson(DEFAULT_PERSON_ID);
 

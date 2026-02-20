@@ -1,22 +1,14 @@
 import { NextResponse } from 'next/server';
-import Anthropic from '@anthropic-ai/sdk';
+import { getAnthropicClient } from '@/lib/anthropic';
+import { createApiHandler } from '@/lib/api-handler';
+import { recallParamsSchema } from '@/lib/schemas';
 import { extractJSON } from '@/lib/extract-json';
 
-const client = new Anthropic();
+const client = getAnthropicClient();
 
-interface MemoryCandidate {
-  id: string;
-  content: string;
-  significance: number;
-}
-
-export async function POST(request: Request) {
-  try {
-    const { query, candidates } = (await request.json()) as {
-      query: string;
-      candidates: MemoryCandidate[];
-    };
-
+export const POST = createApiHandler({
+  schema: recallParamsSchema,
+  handler: async ({ query, candidates }) => {
     if (candidates.length === 0) {
       return NextResponse.json({ ranked: [] });
     }
@@ -52,12 +44,6 @@ Return ONLY valid JSON: {"scores": [0.8, 0.2, 0.9, ...]} matching the order of m
       .sort((a, b) => b.relevance - a.relevance)
       .filter(m => m.relevance > 0.2);
 
-    return NextResponse.json({ ranked });
-  } catch (error) {
-    console.error('Recall API error:', error);
-    return NextResponse.json(
-      { error: 'Failed to recall', details: String(error) },
-      { status: 500 }
-    );
-  }
-}
+    return { ranked };
+  },
+});

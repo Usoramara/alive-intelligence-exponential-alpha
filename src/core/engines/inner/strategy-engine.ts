@@ -1,6 +1,7 @@
 import { Engine } from '../../engine';
 import { ENGINE_IDS, SIGNAL_PRIORITIES } from '../../constants';
 import type { Signal, SignalType } from '../../types';
+import { isSignal } from '../../types';
 
 interface Goal {
   id: string;
@@ -31,16 +32,16 @@ export class StrategyEngine extends Engine {
 
   protected process(signals: Signal[]): void {
     for (const signal of signals) {
-      if (signal.type === 'perspective-update') {
-        const perspective = signal.payload as { theyThinkOfMe: string; relationship: string };
+      if (isSignal(signal, 'perspective-update')) {
+        const perspective = signal.payload;
         const trustGoal = this.goals.find(g => g.description.includes('trust'));
         if (trustGoal && perspective.theyThinkOfMe === 'positive and engaged') {
           trustGoal.progress = Math.min(1, trustGoal.progress + 0.02);
         }
       }
 
-      if (signal.type === 'growth-insight') {
-        const insight = signal.payload as { insight?: string; area?: string };
+      if (isSignal(signal, 'growth-insight')) {
+        const insight = signal.payload;
         // Generate new goal from growth insight if we have room
         if (insight.area && this.getActiveGoals().length < this.MAX_ACTIVE_GOALS) {
           this.addGoalIfNew(`Develop ${insight.area}`, 0.6, 'growth');
@@ -53,8 +54,8 @@ export class StrategyEngine extends Engine {
         }
       }
 
-      if (signal.type === 'discourse-state') {
-        const discourse = signal.payload as { openQuestions: string[]; commitments: string[] };
+      if (isSignal(signal, 'discourse-state')) {
+        const discourse = signal.payload;
         // Track commitment fulfillment as goal progress
         for (const commitment of discourse.commitments) {
           const matchingGoal = this.goals.find(g =>

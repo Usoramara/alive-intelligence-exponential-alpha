@@ -1,5 +1,6 @@
 import { Engine } from '../../engine';
 import { ENGINE_IDS } from '../../constants';
+import { isSignal } from '../../types';
 import type { Signal, SignalType } from '../../types';
 import { saveState, loadState } from '@/lib/indexed-db';
 
@@ -18,7 +19,7 @@ export class PersistenceEngine extends Engine {
   protected process(signals: Signal[]): void {
     // Handle explicit save requests
     for (const signal of signals) {
-      if (signal.type === 'persist-state') {
+      if (isSignal(signal, 'persist-state')) {
         this.save();
       }
     }

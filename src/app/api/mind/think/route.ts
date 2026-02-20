@@ -1,18 +1,10 @@
-import { NextResponse } from 'next/server';
-import { think, type ThinkParams } from '@/lib/claude';
+import { think } from '@/lib/claude';
+import { createApiHandler } from '@/lib/api-handler';
+import { thinkParamsSchema } from '@/lib/schemas';
 
-export async function POST(request: Request) {
-  try {
-    const body = (await request.json()) as ThinkParams;
-
-    const result = await think(body);
-
-    return NextResponse.json(result);
-  } catch (error) {
-    console.error('Think API error:', error);
-    return NextResponse.json(
-      { error: 'Failed to think', details: String(error) },
-      { status: 500 }
-    );
-  }
-}
+export const POST = createApiHandler({
+  schema: thinkParamsSchema,
+  handler: async (body) => {
+    return await think(body);
+  },
+});

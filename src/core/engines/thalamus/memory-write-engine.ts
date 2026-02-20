@@ -1,5 +1,6 @@
 import { Engine } from '../../engine';
 import { ENGINE_IDS } from '../../constants';
+import { isSignal } from '../../types';
 import type { Signal, SignalType } from '../../types';
 import { saveMemory, type MemoryRecord } from '@/lib/indexed-db';
 
@@ -24,12 +25,12 @@ export class MemoryWriteEngine extends Engine {
 
   protected process(signals: Signal[]): void {
     for (const signal of signals) {
-      if (signal.type === 'memory-significance') {
+      if (isSignal(signal, 'memory-significance')) {
         const item = signal.payload as MemorySignificance;
         if (item.significance >= this.significanceThreshold) {
           this.writeQueue.push(item);
         }
-      } else if (signal.type === 'memory-write') {
+      } else if (isSignal(signal, 'memory-write')) {
         const item = signal.payload as MemorySignificance;
         this.writeQueue.push(item);
       }

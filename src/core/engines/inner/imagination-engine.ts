@@ -1,6 +1,7 @@
 import { Engine } from '../../engine';
 import { ENGINE_IDS, SIGNAL_PRIORITIES } from '../../constants';
 import type { Signal, SignalType } from '../../types';
+import { isSignal } from '../../types';
 
 interface DefaultModeThought {
   thought: string;
@@ -36,20 +37,20 @@ export class ImaginationEngine extends Engine {
     }
 
     for (const signal of signals) {
-      if (signal.type === 'stream-thought') {
-        const payload = signal.payload as { thought: string };
+      if (isSignal(signal, 'stream-thought')) {
+        const payload = signal.payload as unknown as { thought: string };
         this.simulateCounterfactual(payload.thought);
         return;
       }
 
-      if (signal.type === 'default-mode-thought') {
+      if (isSignal(signal, 'default-mode-thought')) {
         const thought = signal.payload as DefaultModeThought;
         this.simulateCounterfactual(thought.thought);
         return;
       }
 
-      if (signal.type === 'bound-representation') {
-        const bound = signal.payload as { content: string };
+      if (isSignal(signal, 'bound-representation')) {
+        const bound = signal.payload;
         if (bound.content.length > 20) {
           this.simulateEnriched(bound.content);
           return;

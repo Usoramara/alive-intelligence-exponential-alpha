@@ -1,5 +1,6 @@
 import { Engine } from '../../engine';
 import { ENGINE_IDS, SIGNAL_PRIORITIES } from '../../constants';
+import { isSignal } from '../../types';
 import type { Signal, SignalType } from '../../types';
 
 interface PerceptionResult {
@@ -50,12 +51,12 @@ export class AttentionEngine extends Engine {
     const perceptions: PerceptionResult[] = [];
 
     for (const signal of signals) {
-      if (signal.type === 'perception-result') {
-        perceptions.push(signal.payload as PerceptionResult);
-      } else if (signal.type === 'safety-alert') {
+      if (isSignal(signal, 'perception-result')) {
+        perceptions.push(signal.payload as unknown as PerceptionResult);
+      } else if (isSignal(signal, 'safety-alert')) {
         // Safety always gets highest attention
         this.currentFocus = {
-          content: (signal.payload as { message: string }).message,
+          content: (signal.payload as unknown as { message: string }).message,
           modality: 'text',
           salience: 1.0,
           urgency: 1.0,
@@ -66,7 +67,7 @@ export class AttentionEngine extends Engine {
           priority: SIGNAL_PRIORITIES.CRITICAL,
         });
         return;
-      } else if (signal.type === 'intuition-alert') {
+      } else if (isSignal(signal, 'intuition-alert')) {
         // Intuition bumps attention
         this.selfState.nudge('arousal', 0.05);
         this.selfState.nudge('curiosity', 0.1);

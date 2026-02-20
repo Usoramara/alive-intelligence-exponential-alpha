@@ -1,6 +1,7 @@
 import { Engine } from '../../engine';
 import { ENGINE_IDS, SIGNAL_PRIORITIES } from '../../constants';
 import type { Signal, SignalType, PersonState } from '../../types';
+import { isSignal } from '../../types';
 
 interface EmotionDetection {
   emotions: string[];
@@ -27,16 +28,16 @@ export class EmpathicCouplingEngine extends Engine {
 
   protected process(signals: Signal[]): void {
     for (const signal of signals) {
-      if (signal.type === 'emotion-detected') {
+      if (isSignal(signal, 'emotion-detected')) {
         const detection = signal.payload as EmotionDetection;
         this.coupleEmotions(detection);
-      } else if (signal.type === 'person-state-update') {
-        const update = signal.payload as PersonStateUpdate;
+      } else if (isSignal(signal, 'person-state-update')) {
+        const update = signal.payload as unknown as PersonStateUpdate;
         // Adjust coupling based on attachment
         this.couplingStrength = 0.2 + update.state.attachment * 0.3;
-      } else if (signal.type === 'love-field-update') {
+      } else if (isSignal(signal, 'love-field-update')) {
         // Love field modulates coupling strength
-        const { weight } = signal.payload as { weight: number };
+        const { weight } = signal.payload as unknown as { weight: number };
         this.couplingStrength = Math.min(0.8, this.couplingStrength + weight * 0.1);
       }
     }

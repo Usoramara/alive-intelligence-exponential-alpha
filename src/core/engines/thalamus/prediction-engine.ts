@@ -1,5 +1,6 @@
 import { Engine } from '../../engine';
 import { ENGINE_IDS, SIGNAL_PRIORITIES } from '../../constants';
+import { isSignal } from '../../types';
 import type { Signal, SignalType } from '../../types';
 
 interface Prediction {
@@ -33,8 +34,8 @@ export class PredictionEngine extends Engine {
     const now = Date.now();
 
     for (const signal of signals) {
-      if (signal.type === 'bound-representation') {
-        const bound = signal.payload as { content: string };
+      if (isSignal(signal, 'bound-representation')) {
+        const bound = signal.payload;
         this.validatePredictions(bound.content, now);
 
         // Track topics
@@ -43,21 +44,21 @@ export class PredictionEngine extends Engine {
         if (this.topicHistory.length > 30) this.topicHistory = this.topicHistory.slice(-30);
       }
 
-      if (signal.type === 'emotion-detected') {
-        const emotions = signal.payload as { valence: number };
+      if (isSignal(signal, 'emotion-detected')) {
+        const emotions = signal.payload;
         this.emotionHistory.push(emotions.valence);
         if (this.emotionHistory.length > 20) this.emotionHistory.shift();
       }
 
-      if (signal.type === 'discourse-state') {
-        const discourse = signal.payload as { currentTopic: string | null; openQuestions: string[] };
+      if (isSignal(signal, 'discourse-state')) {
+        const discourse = signal.payload;
         if (discourse.currentTopic && now - this.lastPredictionTime > this.PREDICTION_COOLDOWN) {
           this.generateTopicPrediction(discourse.currentTopic, now);
         }
       }
 
-      if (signal.type === 'tom-inference') {
-        const tom = signal.payload as { theyFeel: string; theyWant: string; confidence: number };
+      if (isSignal(signal, 'tom-inference')) {
+        const tom = signal.payload;
         if (tom.confidence > 0.5 && now - this.lastPredictionTime > this.PREDICTION_COOLDOWN) {
           this.generateEmotionalPrediction(tom, now);
         }

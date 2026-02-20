@@ -1,22 +1,17 @@
 import { NextResponse } from 'next/server';
-import Anthropic from '@anthropic-ai/sdk';
+import { getAnthropicClient } from '@/lib/anthropic';
+import { createApiHandler } from '@/lib/api-handler';
+import { reflectParamsSchema } from '@/lib/schemas';
 
-const client = new Anthropic();
+const client = getAnthropicClient();
 
 const VALID_FLAVORS = new Set([
   'wandering', 'emotional', 'memory', 'curiosity', 'reflection', 'urge',
 ]);
 
-export async function POST(request: Request) {
-  try {
-    const { memories, mood, recentStream, count, flavorHints } = (await request.json()) as {
-      memories?: string[];
-      mood: { valence: number; arousal: number; energy: number };
-      recentStream?: string;
-      count?: number;
-      flavorHints?: string[];
-    };
-
+export const POST = createApiHandler({
+  schema: reflectParamsSchema,
+  handler: async ({ memories, mood, recentStream, count, flavorHints }) => {
     const safeMemories = memories ?? [];
     const thoughtCount = Math.min(Math.max(count ?? 1, 1), 12);
 
@@ -60,7 +55,7 @@ Generate one inner thought:`,
         .join('')
         .trim();
 
-      return NextResponse.json({ thought });
+      return { thought };
     }
 
     // Batch mode: generate multiple thoughts as JSON
@@ -100,18 +95,11 @@ Generate ${thoughtCount} diverse inner thoughts as a JSON array:`,
           flavor: VALID_FLAVORS.has(t.flavor) ? t.flavor : 'reflection',
         }));
 
-      return NextResponse.json({ thoughts });
+      return { thoughts };
     } catch {
-      // JSON parse failed — fall back to treating raw text as a single reflection
-      return NextResponse.json({
+      return {
         thoughts: [{ text: raw.slice(0, 200), flavor: 'reflection' }],
-      });
+      };
     }
-  } catch (error) {
-    console.error('Reflect API error:', error);
-    return NextResponse.json(
-      { error: 'Failed to reflect', details: String(error) },
-      { status: 500 }
-    );
-  }
-}
+  },
+});

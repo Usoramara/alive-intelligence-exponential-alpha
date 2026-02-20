@@ -1,13 +1,7 @@
 import { Engine } from '../../engine';
 import { ENGINE_IDS, SIGNAL_PRIORITIES } from '../../constants';
-import type { Signal, SignalType, SelfState } from '../../types';
-
-interface BoundRepresentation {
-  content: string;
-  context: string[];
-  selfState: SelfState;
-  timestamp: number;
-}
+import type { Signal, SignalType, BoundRepresentation } from '../../types';
+import { isSignal } from '../../types';
 
 interface TomInference {
   thinking: string;
@@ -51,8 +45,8 @@ export class TomEngine extends Engine {
 
   protected process(signals: Signal[]): void {
     for (const signal of signals) {
-      if (signal.type === 'bound-representation') {
-        const bound = signal.payload as BoundRepresentation;
+      if (isSignal(signal, 'bound-representation')) {
+        const bound = signal.payload;
         this.pendingContent = bound.content;
 
         // Add observation
@@ -64,8 +58,8 @@ export class TomEngine extends Engine {
 
         // Validate predictions against actual input
         this.validatePredictions(bound.content);
-      } else if (signal.type === 'emotion-detected') {
-        const emotions = signal.payload as { emotions: string[]; valence: number };
+      } else if (isSignal(signal, 'emotion-detected')) {
+        const emotions = signal.payload;
         // Directly update model's emotion component
         for (const emotion of emotions.emotions) {
           this.model.emotions.set(emotion, { value: emotions.valence, updatedAt: Date.now() });

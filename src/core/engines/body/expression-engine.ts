@@ -1,5 +1,6 @@
 import { Engine } from '../../engine';
 import { ENGINE_IDS } from '../../constants';
+import { isSignal } from '../../types';
 import type { Signal, SignalType } from '../../types';
 
 export interface ExpressionState {
@@ -44,23 +45,23 @@ export class ExpressionEngine extends Engine {
 
   protected process(signals: Signal[]): void {
     for (const signal of signals) {
-      if (signal.type === 'expression-update') {
-        const update = signal.payload as Partial<ExpressionState>;
+      if (isSignal(signal, 'expression-update')) {
+        const update = signal.payload as unknown as Partial<ExpressionState>;
         Object.assign(this.expressionState, update);
       }
 
-      if (signal.type === 'voice-output') {
+      if (isSignal(signal, 'voice-output')) {
         this.expressionState.speaking = true;
         // Reset speaking after estimated duration
-        const text = (signal.payload as { text: string }).text;
+        const text = signal.payload.text;
         const duration = Math.max(1000, text.length * 50);
         setTimeout(() => {
           this.expressionState.speaking = false;
         }, duration);
       }
 
-      if (signal.type === 'empathic-state') {
-        const empathy = signal.payload as { response: string };
+      if (isSignal(signal, 'empathic-state')) {
+        const empathy = signal.payload;
         if (empathy.response === 'compassion') {
           this.expressionState.microExpressions = ['softened_brows', 'slight_frown'];
         }

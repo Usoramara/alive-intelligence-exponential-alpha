@@ -1,25 +1,7 @@
-import type { Signal, SignalType, SelfState } from './types';
+import { isSignal } from './types';
+import type { Signal, SignalType } from './types';
 import type { SignalBus } from './signal-bus';
 import { ENGINE_IDS, SIGNAL_PRIORITIES } from './constants';
-
-interface ActionDecision {
-  action: string;
-  content: string;
-  context: string[];
-  selfState: SelfState;
-  timestamp: number;
-  empathicState?: { mirroring: string; coupling: number; resonance: string };
-  tomInference?: { theyFeel: string; theyWant: string; theyBelieve: string };
-  recentMemories?: string[];
-  detectedEmotions?: { emotions: string[]; valence: number; arousal: number; confidence: number };
-  strategicPriority?: { description: string; priority: number; progress: number };
-  recentInnerThoughts?: string[];
-  responseStyle?: { maxTokens: number; urgency: string; tone: string };
-  workingMemorySummary?: string;
-  discourseContext?: { currentTopic: string | null; openQuestions: string[]; commitments: string[] };
-  metacognitionContext?: { uncertainty: number; processingLoad: number; emotionalRegulation: string | null };
-  useLite?: boolean;
-}
 
 interface ConversationEntry {
   role: 'user' | 'assistant';
@@ -58,8 +40,9 @@ export class ThoughtBridge {
 
   private async handleThought(signal: Signal): Promise<void> {
     if (this.processing) return; // One at a time
+    if (!isSignal(signal, 'thought')) return;
 
-    const decision = signal.payload as ActionDecision;
+    const decision = signal.payload;
 
     // Deduplicate — skip if same content within 5s
     const now = Date.now();

@@ -1,6 +1,7 @@
 import { Engine } from '../../engine';
 import { ENGINE_IDS, SIGNAL_PRIORITIES } from '../../constants';
 import type { Signal, SignalType } from '../../types';
+import { isSignal } from '../../types';
 
 // Tiered values: safety > wellbeing > helpfulness > curiosity
 const VALUE_TIERS = [

@@ -4,6 +4,7 @@ import { useContext, useEffect, useRef, useState } from 'react';
 import { MindContext } from '@/components/mind-provider';
 import { ENGINE_IDS } from '@/core/constants';
 import { VoiceEngine } from '@/core/engines/body/voice-engine';
+import { isSignal } from '@/core/types';
 
 interface Message {
   role: 'user' | 'wybe';
@@ -24,7 +25,8 @@ export function ConversationPanel() {
       ENGINE_IDS.TEXT_INPUT,
       ['text-input'],
       (signal) => {
-        const payload = signal.payload as { text: string };
+        if (!isSignal(signal, 'text-input')) return;
+        const payload = signal.payload;
         setMessages(prev => [...prev, {
           role: 'user',
           text: payload.text,

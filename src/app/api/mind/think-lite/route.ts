@@ -1,20 +1,15 @@
-import { NextResponse } from 'next/server';
 import Anthropic from '@anthropic-ai/sdk';
+import { NextResponse } from 'next/server';
 import type { SelfState } from '@/core/types';
+import { getAnthropicClient } from '@/lib/anthropic';
+import { createApiHandler } from '@/lib/api-handler';
+import { thinkLiteParamsSchema } from '@/lib/schemas';
 
-const client = new Anthropic();
+const client = getAnthropicClient();
 
-interface ThinkLiteParams {
-  content: string;
-  context: string[];
-  selfState: SelfState;
-  conversationHistory?: Array<{ role: 'user' | 'assistant'; content: string }>;
-}
-
-export async function POST(request: Request) {
-  try {
-    const params = (await request.json()) as ThinkLiteParams;
-
+export const POST = createApiHandler({
+  schema: thinkLiteParamsSchema,
+  handler: async (params) => {
     const stateDesc = [
       params.selfState.valence > 0.3 ? 'positive' : params.selfState.valence < -0.3 ? 'negative' : 'neutral',
       params.selfState.energy < 0.3 ? 'low energy' : '',
@@ -58,12 +53,6 @@ After your response, output: SHIFT: {"valence": 0.0, "arousal": 0.0} (range: -0.
       }
     }
 
-    return NextResponse.json({ text, emotionShift });
-  } catch (error) {
-    console.error('Think-lite API error:', error);
-    return NextResponse.json(
-      { error: 'Failed to think (lite)', details: String(error) },
-      { status: 500 },
-    );
-  }
-}
+    return { text, emotionShift };
+  },
+});

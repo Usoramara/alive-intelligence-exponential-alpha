@@ -1,5 +1,6 @@
 import { Engine } from '../../engine';
 import { ENGINE_IDS, SIGNAL_PRIORITIES } from '../../constants';
+import { isSignal } from '../../types';
 import type { Signal, SignalType } from '../../types';
 
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
@@ -105,8 +106,8 @@ export class MicrophoneEngine extends Engine {
 
   protected process(signals: Signal[]): void {
     for (const signal of signals) {
-      if (signal.type === 'engine-status') {
-        const cmd = signal.payload as { engine: string; action: string };
+      if (isSignal(signal, 'engine-status')) {
+        const cmd = signal.payload;
         if (cmd.engine === this.id) {
           if (cmd.action === 'enable') this.enable();
           else if (cmd.action === 'disable') this.disable();

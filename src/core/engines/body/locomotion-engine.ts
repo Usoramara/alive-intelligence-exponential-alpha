@@ -1,5 +1,6 @@
 import { Engine } from '../../engine';
 import { ENGINE_IDS } from '../../constants';
+import { isSignal } from '../../types';
 import type { Signal, SignalType } from '../../types';
 
 export class LocomotionEngine extends Engine {
@@ -15,13 +16,15 @@ export class LocomotionEngine extends Engine {
 
   protected process(signals: Signal[]): void {
     for (const signal of signals) {
-      const payload = signal.payload as { action: string; reason?: string };
-      this.currentAction = payload.action;
+      if (isSignal(signal, 'locomotion-update') || isSignal(signal, 'motor-command')) {
+        const payload = signal.payload;
+        this.currentAction = payload.action;
 
-      if (payload.action === 'halt') {
-        this.debugInfo = `Halted: ${payload.reason || 'unknown'}`;
-      } else {
-        this.debugInfo = `Action: ${payload.action}`;
+        if (payload.action === 'halt') {
+          this.debugInfo = `Halted: ${payload.reason || 'unknown'}`;
+        } else {
+          this.debugInfo = `Action: ${payload.action}`;
+        }
       }
     }
     this.status = 'idle';

@@ -1,6 +1,7 @@
 import { Engine } from '../../engine';
 import { ENGINE_IDS, SIGNAL_PRIORITIES } from '../../constants';
 import type { Signal, SignalType } from '../../types';
+import { isSignal } from '../../types';
 
 interface TomInference {
   thinking: string;
@@ -40,13 +41,13 @@ export class PerspectiveEngine extends Engine {
 
   protected process(signals: Signal[]): void {
     for (const signal of signals) {
-      if (signal.type === 'tom-inference') {
+      if (isSignal(signal, 'tom-inference')) {
         const tom = signal.payload as TomInference;
         this.addObservation(tom);
         this.updatePerspective(tom);
       }
 
-      if (signal.type === 'prediction-validated') {
+      if (isSignal(signal, 'prediction-validated')) {
         // Successful prediction → relationship indicator
         this.selfState.nudge('confidence', 0.02);
       }

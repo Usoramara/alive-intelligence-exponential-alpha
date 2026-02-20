@@ -14,7 +14,8 @@ export class SignalBus {
   private history: Signal[] = [];
   private historyIndex = 0;
 
-  emit(signal: Omit<Signal, 'id' | 'timestamp' | 'ttl'> & { id?: string; timestamp?: number; ttl?: number }): Signal {
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  emit(signal: Omit<Signal<any>, 'id' | 'timestamp' | 'ttl'> & { id?: string; timestamp?: number; ttl?: number }): Signal {
     const full: Signal = {
       id: signal.id ?? createSignalId(),
       type: signal.type,

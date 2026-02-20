@@ -1,5 +1,6 @@
 import { Engine } from '../../engine';
 import { ENGINE_IDS, SIGNAL_PRIORITIES } from '../../constants';
+import { isSignal } from '../../types';
 import type { Signal, SignalType } from '../../types';
 
 interface TextPayload {
@@ -25,59 +26,50 @@ export class PerceptionEngine extends Engine {
 
   protected process(signals: Signal[]): void {
     for (const signal of signals) {
-      switch (signal.type) {
-        case 'text-input': {
-          const payload = signal.payload as TextPayload;
-          const result: PerceptionResult = {
-            type: 'text',
-            content: payload.text,
-            timestamp: payload.timestamp,
-            salience: this.estimateTextSalience(payload.text),
-          };
+      if (isSignal(signal, 'text-input')) {
+        const payload = signal.payload as unknown as TextPayload;
+        const result: PerceptionResult = {
+          type: 'text',
+          content: payload.text,
+          timestamp: payload.timestamp,
+          salience: this.estimateTextSalience(payload.text),
+        };
 
-          // Forward to attention for routing
-          this.emit('perception-result', result, {
-            target: ENGINE_IDS.ATTENTION,
-            priority: SIGNAL_PRIORITIES.HIGH,
-          });
+        // Forward to attention for routing
+        this.emit('perception-result', result, {
+          target: ENGINE_IDS.ATTENTION,
+          priority: SIGNAL_PRIORITIES.HIGH,
+        });
 
-          // Also forward to emotion inference
-          this.emit('perception-result', result, {
-            target: ENGINE_IDS.EMOTION_INFERENCE,
-            priority: SIGNAL_PRIORITIES.MEDIUM,
-          });
+        // Also forward to emotion inference
+        this.emit('perception-result', result, {
+          target: ENGINE_IDS.EMOTION_INFERENCE,
+          priority: SIGNAL_PRIORITIES.MEDIUM,
+        });
 
-          this.debugInfo = `Perceived text: "${payload.text.slice(0, 30)}..."`;
-          break;
-        }
-
-        case 'camera-frame': {
-          // Will be used in Phase 4
-          this.emit('perception-result', {
-            type: 'visual',
-            content: '[visual frame]',
-            timestamp: Date.now(),
-            salience: 0.5,
-          }, {
-            target: ENGINE_IDS.ATTENTION,
-            priority: SIGNAL_PRIORITIES.MEDIUM,
-          });
-          break;
-        }
-
-        case 'speech-text': {
-          const payload = signal.payload as TextPayload;
-          this.emit('perception-result', {
-            type: 'text',
-            content: payload.text,
-            timestamp: Date.now(),
-            salience: this.estimateTextSalience(payload.text) + 0.1, // Speech slightly more salient
-          }, {
-            target: ENGINE_IDS.ATTENTION,
-            priority: SIGNAL_PRIORITIES.HIGH,
-          });
-          break;
-        }
+        this.debugInfo = `Perceived text: "${payload.text.slice(0, 30)}..."`;
+      } else if (isSignal(signal, 'camera-frame')) {
+        // Will be used in Phase 4
+        this.emit('perception-result', {
+          type: 'visual',
+          content: '[visual frame]',
+          timestamp: Date.now(),
+          salience: 0.5,
+        }, {
+          target: ENGINE_IDS.ATTENTION,
+          priority: SIGNAL_PRIORITIES.MEDIUM,
+        });
+      } else if (isSignal(signal, 'speech-text')) {
+        const payload = signal.payload as unknown as TextPayload;
+        this.emit('perception-result', {
+          type: 'text',
+          content: payload.text,
+          timestamp: Date.now(),
+          salience: this.estimateTextSalience(payload.text) + 0.1, // Speech slightly more salient
+        }, {
+          target: ENGINE_IDS.ATTENTION,
+          priority: SIGNAL_PRIORITIES.HIGH,
+        });
       }
     }
     this.status = 'idle';

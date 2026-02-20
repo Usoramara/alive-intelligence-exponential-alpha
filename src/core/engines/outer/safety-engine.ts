@@ -1,5 +1,6 @@
 import { Engine } from '../../engine';
 import { ENGINE_IDS, SIGNAL_PRIORITIES } from '../../constants';
+import { isSignal } from '../../types';
 import type { Signal, SignalType } from '../../types';
 
 const SAFETY_PATTERNS = [
@@ -23,7 +24,7 @@ export class SafetyEngine extends Engine {
       const content = this.extractContent(signal);
       if (!content) continue;
 
-      if (signal.type === 'value-violation') {
+      if (isSignal(signal, 'value-violation')) {
         // Values engine already flagged — escalate
         this.emit('safety-alert', {
           level: 'critical',

@@ -1,4 +1,5 @@
 import { Engine } from '../../engine';
+import { isSignal } from '../../types';
 import type { Signal, SignalType } from '../../types';
 
 export class TextInputEngine extends Engine {
@@ -12,14 +13,14 @@ export class TextInputEngine extends Engine {
 
   protected process(signals: Signal[]): void {
     for (const signal of signals) {
-      if (signal.type === 'text-input') {
+      if (isSignal(signal, 'text-input')) {
         // Mark external input for drive system timing
         this.selfState.markExternalInput();
         // Perception gets the broadcast directly — we just track state
         this.selfState.nudge('social', 0.05);
         this.selfState.nudge('arousal', 0.03);
 
-        const text = (signal.payload as { text: string }).text;
+        const text = signal.payload.text;
         this.selfState.pushStream({
           text: `Hearing: "${text}"`,
           source: 'text-input',

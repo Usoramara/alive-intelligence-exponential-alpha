@@ -1,7 +1,8 @@
 import Anthropic from '@anthropic-ai/sdk';
-import type { SelfState } from '@/core/types';
+import type { SelfState, ResponseStyle } from '@/core/types';
+import { getAnthropicClient } from './anthropic';
 
-const client = new Anthropic();
+const client = getAnthropicClient();
 
 function selfStateToDescription(state: SelfState): string {
   const parts: string[] = [];
@@ -26,12 +27,6 @@ function selfStateToDescription(state: SelfState): string {
   else if (state.curiosity < 0.3) parts.push('disinterested');
 
   return parts.join(', ');
-}
-
-export interface ResponseStyle {
-  maxTokens: number;
-  urgency: 'low' | 'normal' | 'high';
-  tone: 'gentle' | 'neutral' | 'energetic';
 }
 
 export interface ThinkParams {

@@ -1,6 +1,7 @@
 import { Engine } from '../../engine';
 import { ENGINE_IDS, SIGNAL_PRIORITIES } from '../../constants';
 import type { Signal, SignalType } from '../../types';
+import { isSignal } from '../../types';
 import { getMemories } from '@/lib/indexed-db';
 
 export class ReplayEngine extends Engine {
@@ -21,16 +22,16 @@ export class ReplayEngine extends Engine {
     this.consecutiveIdleFrames = 0;
 
     for (const signal of signals) {
-      if (signal.type === 'stream-thought') {
+      if (isSignal(signal, 'stream-thought')) {
         // Stream thoughts with memory or reflection flavor trigger replay probabilistically
-        const payload = signal.payload as { flavor?: string };
+        const payload = signal.payload;
         if (payload.flavor === 'memory' || payload.flavor === 'reflection') {
           if (Math.random() < 0.3) {
             this.triggerReplay();
             return;
           }
         }
-      } else if (signal.type === 'default-mode-thought') {
+      } else if (isSignal(signal, 'default-mode-thought')) {
         this.triggerReplay();
         return;
       }

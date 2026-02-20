@@ -1,14 +1,8 @@
 import { Engine } from '../../engine';
 import { ENGINE_IDS, SIGNAL_PRIORITIES } from '../../constants';
-import type { Signal, SignalType, SelfState } from '../../types';
+import { isSignal } from '../../types';
+import type { Signal, SignalType, BoundRepresentation } from '../../types';
 import { WorkingMemory, type WorkingMemoryItem } from '../../working-memory';
-
-interface BoundRepresentation {
-  content: string;
-  context: string[];
-  selfState: SelfState;
-  timestamp: number;
-}
 
 export class WorkingMemoryEngine extends Engine {
   private wm = new WorkingMemory();
@@ -36,14 +30,14 @@ export class WorkingMemoryEngine extends Engine {
 
   protected process(signals: Signal[]): void {
     for (const signal of signals) {
-      if (signal.type === 'bound-representation') {
-        const bound = signal.payload as BoundRepresentation;
+      if (isSignal(signal, 'bound-representation')) {
+        const bound = signal.payload;
         this.extractAndStore(bound.content, 'user-input');
-      } else if (signal.type === 'claude-response') {
-        const response = signal.payload as { text: string };
+      } else if (isSignal(signal, 'claude-response')) {
+        const response = signal.payload;
         this.wm.add(response.text.slice(0, 100), 'fact', 'claude');
-      } else if (signal.type === 'emotion-detected') {
-        const emotions = signal.payload as { emotions: string[] };
+      } else if (isSignal(signal, 'emotion-detected')) {
+        const emotions = signal.payload;
         if (emotions.emotions.length > 0) {
           this.wm.add(emotions.emotions.join(', '), 'emotion', 'emotion-inference');
         }

@@ -1,6 +1,7 @@
 import { Engine } from '../../engine';
 import { ENGINE_IDS, SIGNAL_PRIORITIES } from '../../constants';
 import type { Signal, SignalType } from '../../types';
+import { isSignal } from '../../types';
 
 interface ImaginationResult {
   scenario: string;
@@ -26,8 +27,8 @@ export class HopeWorryEngine extends Engine {
 
   protected process(signals: Signal[]): void {
     for (const signal of signals) {
-      if (signal.type === 'imagination-result') {
-        const result = signal.payload as ImaginationResult;
+      if (isSignal(signal, 'imagination-result')) {
+        const result = signal.payload as unknown as ImaginationResult;
         this.evaluateScenario(result.scenario);
       }
     }

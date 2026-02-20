@@ -1,15 +1,10 @@
 import { NextResponse } from 'next/server';
-import Anthropic from '@anthropic-ai/sdk';
+import { getAnthropicClient } from '@/lib/anthropic';
+import { createApiHandler } from '@/lib/api-handler';
+import { tomRequestSchema } from '@/lib/schemas';
 import { extractJSON } from '@/lib/extract-json';
 
-const client = new Anthropic();
-
-interface TomRequest {
-  content: string;
-  recentObservations: string;
-  currentEmotions?: string;
-  existingBeliefs?: Record<string, string>;
-}
+const client = getAnthropicClient();
 
 interface TomResult {
   thinking: string;
@@ -21,10 +16,9 @@ interface TomResult {
   prediction?: { topic: string; prediction: string };
 }
 
-export async function POST(request: Request) {
-  try {
-    const body = (await request.json()) as TomRequest;
-
+export const POST = createApiHandler({
+  schema: tomRequestSchema,
+  handler: async (body) => {
     const beliefsContext = body.existingBeliefs && Object.keys(body.existingBeliefs).length > 0
       ? `\nExisting beliefs about this person: ${JSON.stringify(body.existingBeliefs)}`
       : '';
@@ -74,12 +68,6 @@ beliefUpdates and desireUpdates should only include changes. prediction is optio
       );
     }
 
-    return NextResponse.json(result);
-  } catch (error) {
-    console.error('ToM API error:', error);
-    return NextResponse.json(
-      { error: 'Failed to infer mental state', details: String(error) },
-      { status: 500 },
-    );
-  }
-}
+    return result;
+  },
+});
