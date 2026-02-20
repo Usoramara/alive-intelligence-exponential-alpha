@@ -1,0 +1,19 @@
+name: translate_text
+description: Translate text between languages.
+parameters:
+  type: object
+  properties:
+    text:
+      type: string
+      description: The text to translate
+    target_language:
+      type: string
+      description: Target language (e.g. "Spanish", "French", "Japanese")
+    source_language:
+      type: string
+      description: Source language. Auto-detected if not specified.
+  required: [text, target_language]
+prompt: |
+  Translate the following text to {{target_language}}.
+  {{#source_language}}From: {{source_language}}{{/source_language}}
+  Text: {{text}}

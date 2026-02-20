@@ -9,8 +9,8 @@ const hasClerkKeys =
 
 // Rate limiting (per-user when authenticated, per-IP when not)
 const WINDOW_MS = 60_000;
-const MAX_REQUESTS_FREE = 20;
-const MAX_REQUESTS_AUTHENTICATED = 60;
+const MAX_REQUESTS_FREE = 200;
+const MAX_REQUESTS_AUTHENTICATED = 600;
 
 const hits = new Map<string, { count: number; resetAt: number }>();
 
@@ -86,7 +86,7 @@ if (hasClerkKeys) {
     '/',
     '/sign-in(.*)',
     '/sign-up(.*)',
-    '/api/webhooks(.*)',
+    '/api(.*)',
   ]);
 
   const isApiRoute = createRouteMatcher(['/api/mind(.*)', '/api/user(.*)']);
@@ -94,6 +94,7 @@ if (hasClerkKeys) {
   middleware = clerkMiddleware(async (auth, request) => {
     const { userId } = await auth();
 
+    // Rate limit API routes (auth handled by route handlers themselves)
     if (isApiRoute(request)) {
       const rateLimitKey = userId ?? `ip:${getClientIp(request as NextRequest)}`;
       const maxRequests = userId ? MAX_REQUESTS_AUTHENTICATED : MAX_REQUESTS_FREE;
@@ -101,6 +102,7 @@ if (hasClerkKeys) {
       if (rateLimitResponse) return rateLimitResponse;
     }
 
+    // Only protect page routes — API routes handle their own auth
     if (!isPublicRoute(request)) {
       await auth.protect();
     }

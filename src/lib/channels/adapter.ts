@@ -9,11 +9,33 @@ export interface IncomingMessage {
   channelUserId: string; // Platform-specific user ID
   text: string;
   metadata?: Record<string, unknown>;
+  /** Media attachments (images, audio, documents) */
+  attachments?: Attachment[];
+}
+
+export interface Attachment {
+  type: 'image' | 'audio' | 'document' | 'video';
+  url?: string; // Direct URL to the media
+  data_base64?: string; // Base64-encoded data
+  mime_type?: string;
+  filename?: string;
+  caption?: string;
 }
 
 export interface OutgoingMessage {
   text: string;
   metadata?: Record<string, unknown>;
+  /** Optional media to send with the message */
+  attachments?: OutgoingAttachment[];
+}
+
+export interface OutgoingAttachment {
+  type: 'image' | 'audio' | 'document';
+  url?: string;
+  data_base64?: string;
+  mime_type?: string;
+  filename?: string;
+  caption?: string;
 }
 
 export interface ChannelAdapter {

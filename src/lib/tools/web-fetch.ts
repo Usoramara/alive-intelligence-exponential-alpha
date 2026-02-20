@@ -169,3 +169,89 @@ export async function webFetch(params: {
     truncated,
   };
 }
+
+/**
+ * Firecrawl-backed fetch — used as fallback when Readability fails
+ * or when explicitly requested for better extraction quality.
+ */
+async function firecrawlFetch(url: string, maxChars: number): Promise<WebFetchOutput> {
+  const apiKey = process.env.FIRECRAWL_API_KEY;
+  if (!apiKey) throw new Error('FIRECRAWL_API_KEY not configured.');
+
+  const res = await fetch('https://api.firecrawl.dev/v1/scrape', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${apiKey}`,
+    },
+    body: JSON.stringify({
+      url,
+      formats: ['markdown'],
+    }),
+    signal: AbortSignal.timeout(30_000),
+  });
+
+  if (!res.ok) {
+    const detail = await res.text().catch(() => '');
+    throw new Error(`Firecrawl API error (${res.status}): ${detail || res.statusText}`);
+  }
+
+  const data = await res.json() as {
+    success: boolean;
+    data?: { markdown?: string; metadata?: { title?: string } };
+  };
+
+  if (!data.success || !data.data?.markdown) {
+    throw new Error('Firecrawl returned no content');
+  }
+
+  let text = data.data.markdown;
+  const truncated = text.length > maxChars;
+  if (truncated) text = text.slice(0, maxChars);
+
+  return {
+    url,
+    title: data.data.metadata?.title,
+    text,
+    contentType: 'text/markdown',
+    truncated,
+  };
+}
+
+/**
+ * Enhanced web fetch with Firecrawl fallback.
+ * Tries standard fetch first, falls back to Firecrawl if content is too short
+ * or if the standard fetch fails on JS-heavy pages.
+ */
+export async function webFetchEnhanced(params: {
+  url: string;
+  max_chars?: number;
+  use_firecrawl?: boolean;
+}): Promise<WebFetchOutput> {
+  const maxChars = Math.max(100, params.max_chars ?? DEFAULT_MAX_CHARS);
+
+  // If explicitly requesting Firecrawl
+  if (params.use_firecrawl && process.env.FIRECRAWL_API_KEY) {
+    return firecrawlFetch(params.url, maxChars);
+  }
+
+  // Try standard fetch first
+  try {
+    const result = await webFetch({ url: params.url, max_chars: params.max_chars });
+    // If content is very short, try Firecrawl as fallback
+    if (result.text.length < 100 && process.env.FIRECRAWL_API_KEY) {
+      try {
+        return await firecrawlFetch(params.url, maxChars);
+      } catch {
+        return result; // Firecrawl failed too, return original
+      }
+    }
+    return result;
+  } catch (err) {
+    // Standard fetch failed — try Firecrawl
+    if (process.env.FIRECRAWL_API_KEY) {
+      return firecrawlFetch(params.url, maxChars);
+    }
+    throw err;
+  }
+}

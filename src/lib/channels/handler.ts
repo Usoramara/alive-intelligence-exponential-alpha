@@ -3,17 +3,16 @@
  * Processes incoming channel messages through Wybe's cognitive pipeline
  * (think() with tools) and returns the response.
  *
- * Unlike the browser-based CognitiveLoop which runs at 60fps with
- * requestAnimationFrame, channel messages get a simpler single-pass
- * pipeline: think() → response. The full cognitive loop (35 engines,
- * inner thoughts, etc.) runs only in the browser.
+ * Enhanced with media attachment processing: images are described via
+ * Claude Vision, audio is transcribed, and the results are included
+ * in the think() context.
  */
 
 import { think, type ThinkParams } from '@/lib/claude';
 import { getDb } from '@/db';
 import { cognitiveStates } from '@/db/schema';
 import { eq } from 'drizzle-orm';
-import type { IncomingMessage, OutgoingMessage, ChannelAdapter } from './adapter';
+import type { IncomingMessage, OutgoingMessage, ChannelAdapter, Attachment } from './adapter';
 
 // Default self state for channel-only users
 const DEFAULT_STATE = {
@@ -29,6 +28,57 @@ const DEFAULT_STATE = {
 const channelHistories = new Map<string, Array<{ role: 'user' | 'assistant'; content: string }>>();
 
 const MAX_HISTORY = 20;
+
+/**
+ * Process media attachments and generate text descriptions.
+ */
+async function processAttachments(attachments: Attachment[]): Promise<string[]> {
+  const descriptions: string[] = [];
+
+  for (const attachment of attachments) {
+    try {
+      switch (attachment.type) {
+        case 'image': {
+          if (attachment.url || attachment.data_base64) {
+            const { understandImage } = await import('@/lib/tools/image-understand');
+            const imageUrl = attachment.url ?? `data:${attachment.mime_type ?? 'image/jpeg'};base64,${attachment.data_base64}`;
+            const result = await understandImage({ url: imageUrl });
+            descriptions.push(`[Image: ${result.description}]`);
+          }
+          break;
+        }
+        case 'audio': {
+          if (attachment.url || attachment.data_base64) {
+            const { transcribeAudio } = await import('@/lib/tools/transcribe');
+            const audioUrl = attachment.url ?? `data:${attachment.mime_type ?? 'audio/mpeg'};base64,${attachment.data_base64}`;
+            const result = await transcribeAudio({ url: audioUrl });
+            descriptions.push(`[Audio transcription: ${result.text}]`);
+          }
+          break;
+        }
+        case 'document': {
+          if (attachment.url && attachment.mime_type?.includes('pdf')) {
+            const { readPdf } = await import('@/lib/tools/pdf-read');
+            const result = await readPdf({ url: attachment.url, max_pages: 5 });
+            descriptions.push(`[PDF content (${result.pages} pages): ${result.text.slice(0, 2000)}]`);
+          } else {
+            descriptions.push(`[Document: ${attachment.filename ?? 'unnamed'} (${attachment.mime_type ?? 'unknown type'})]`);
+          }
+          break;
+        }
+        case 'video': {
+          descriptions.push(`[Video attachment: ${attachment.filename ?? 'unnamed'}]`);
+          break;
+        }
+      }
+    } catch (err) {
+      const msg = err instanceof Error ? err.message : 'Unknown error';
+      descriptions.push(`[Failed to process ${attachment.type}: ${msg}]`);
+    }
+  }
+
+  return descriptions;
+}
 
 /**
  * Process an incoming channel message through Wybe's think() pipeline.
@@ -60,12 +110,21 @@ export async function handleChannelMessage(
     // Database not available — use defaults
   }
 
+  // Process media attachments if present
+  let messageText = message.text;
+  if (message.attachments?.length) {
+    const mediaDescriptions = await processAttachments(message.attachments);
+    if (mediaDescriptions.length > 0) {
+      messageText = [messageText, ...mediaDescriptions].filter(Boolean).join('\n');
+    }
+  }
+
   // Get or create conversation history for this channel user
   const historyKey = `${message.channelType}:${message.channelUserId}`;
   let history = channelHistories.get(historyKey) ?? [];
 
   // Add user message to history
-  history.push({ role: 'user', content: message.text });
+  history.push({ role: 'user', content: messageText });
   if (history.length > MAX_HISTORY * 2) {
     history = history.slice(-MAX_HISTORY * 2);
   }
@@ -73,7 +132,7 @@ export async function handleChannelMessage(
 
   // Build think params
   const params: ThinkParams = {
-    content: message.text,
+    content: messageText,
     context: [`Channel: ${message.channelType}`],
     selfState,
     conversationHistory: history.slice(0, -1),

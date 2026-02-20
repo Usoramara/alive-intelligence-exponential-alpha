@@ -90,6 +90,30 @@ export const memories = pgTable(
   (t) => [index('memories_user_idx').on(t.userId)],
 );
 
+// ── Scheduled Jobs ──
+
+export const scheduledJobs = pgTable(
+  'scheduled_jobs',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    description: text('description').notNull(),
+    cronExpr: text('cron_expr'),
+    nextRunAt: timestamp('next_run_at').notNull(),
+    timezone: text('timezone').default('UTC'),
+    payload: text('payload'), // JSON string with job details
+    status: text('status').notNull().default('active'), // 'active' | 'completed' | 'cancelled'
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (t) => [
+    index('scheduled_jobs_user_idx').on(t.userId),
+    index('scheduled_jobs_status_next_run_idx').on(t.status, t.nextRunAt),
+  ],
+);
+
 // ── Usage Records ──
 
 export const usageRecords = pgTable(

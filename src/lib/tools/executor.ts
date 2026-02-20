@@ -1,7 +1,18 @@
 // Tool executor — dispatches tool calls by name and returns results
 
 import { webSearch } from './web-search';
-import { webFetch } from './web-fetch';
+import { webFetch, webFetchEnhanced } from './web-fetch';
+import { textToSpeech } from './tts';
+import { generateImage } from './image-gen';
+import { understandImage } from './image-understand';
+import { transcribeAudio } from './transcribe';
+import { readPdf } from './pdf-read';
+import { scheduleTask, listSchedules, cancelSchedule } from './schedule';
+import { sendChannelMessage } from './send-message';
+import { browserNavigate, browserScreenshot, browserAct } from './browser';
+import { executeCode } from './code-exec';
+import { sendEmail } from './email';
+import { getWeather } from './weather';
 import { searchMemories } from '@/lib/memory/manager';
 
 export interface ToolCall {
@@ -44,20 +55,139 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
         result = await webSearch({
           query: call.input.query as string,
           count: call.input.count as number | undefined,
+          provider: call.input.provider as 'brave' | 'perplexity' | 'grok' | undefined,
         });
         break;
 
       case 'web_fetch':
-        result = await webFetch({
-          url: call.input.url as string,
-          max_chars: call.input.max_chars as number | undefined,
-        });
+        result = call.input.use_firecrawl
+          ? await webFetchEnhanced({
+              url: call.input.url as string,
+              max_chars: call.input.max_chars as number | undefined,
+              use_firecrawl: true,
+            })
+          : await webFetch({
+              url: call.input.url as string,
+              max_chars: call.input.max_chars as number | undefined,
+            });
         break;
 
       case 'memory_search':
         result = await memorySearch({
           query: call.input.query as string,
           userId: call.userId,
+        });
+        break;
+
+      case 'text_to_speech':
+        result = await textToSpeech({
+          text: call.input.text as string,
+          voice: call.input.voice as string | undefined,
+          provider: call.input.provider as 'edge' | 'elevenlabs' | 'openai' | undefined,
+        });
+        break;
+
+      case 'generate_image':
+        result = await generateImage({
+          prompt: call.input.prompt as string,
+          size: call.input.size as '1024x1024' | '1024x1792' | '1792x1024' | undefined,
+          quality: call.input.quality as 'standard' | 'hd' | undefined,
+          style: call.input.style as 'vivid' | 'natural' | undefined,
+        });
+        break;
+
+      case 'understand_image':
+        result = await understandImage({
+          url: call.input.url as string,
+          question: call.input.question as string | undefined,
+        });
+        break;
+
+      case 'transcribe_audio':
+        result = await transcribeAudio({
+          url: call.input.url as string,
+          language: call.input.language as string | undefined,
+          provider: call.input.provider as 'openai' | 'deepgram' | undefined,
+        });
+        break;
+
+      case 'read_pdf':
+        result = await readPdf({
+          url: call.input.url as string,
+          max_pages: call.input.max_pages as number | undefined,
+        });
+        break;
+
+      case 'schedule_task':
+        result = await scheduleTask({
+          description: call.input.description as string,
+          run_at: call.input.run_at as string | undefined,
+          cron: call.input.cron as string | undefined,
+          timezone: call.input.timezone as string | undefined,
+          userId: call.userId,
+        });
+        break;
+
+      case 'list_schedules':
+        result = await listSchedules({ userId: call.userId });
+        break;
+
+      case 'cancel_schedule':
+        result = await cancelSchedule({
+          schedule_id: call.input.schedule_id as string,
+          userId: call.userId,
+        });
+        break;
+
+      case 'send_message':
+        result = await sendChannelMessage({
+          channel: call.input.channel as 'telegram' | 'slack' | 'discord' | 'whatsapp',
+          recipient: call.input.recipient as string,
+          text: call.input.text as string,
+        });
+        break;
+
+      case 'browser_navigate':
+        result = await browserNavigate({
+          url: call.input.url as string,
+          userId: call.userId,
+        });
+        break;
+
+      case 'browser_screenshot':
+        result = await browserScreenshot({
+          userId: call.userId,
+        });
+        break;
+
+      case 'browser_act':
+        result = await browserAct({
+          action: call.input.action as string,
+          selector: call.input.selector as string | undefined,
+          value: call.input.value as string | undefined,
+          userId: call.userId,
+        });
+        break;
+
+      case 'execute_code':
+        result = await executeCode({
+          code: call.input.code as string,
+          language: call.input.language as 'javascript' | 'typescript' | 'python' | 'bash' | undefined,
+        });
+        break;
+
+      case 'send_email':
+        result = await sendEmail({
+          to: call.input.to as string,
+          subject: call.input.subject as string,
+          body: call.input.body as string,
+          html: call.input.html as boolean | undefined,
+        });
+        break;
+
+      case 'get_weather':
+        result = await getWeather({
+          location: call.input.location as string,
         });
         break;
 

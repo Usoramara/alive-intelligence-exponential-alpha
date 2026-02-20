@@ -1,0 +1,17 @@
+name: summarize_text
+description: Summarize a piece of text concisely, capturing key points and main ideas.
+parameters:
+  type: object
+  properties:
+    text:
+      type: string
+      description: The text to summarize
+    length:
+      type: string
+      enum: [short, medium, long]
+      description: Desired summary length. Default: medium
+  required: [text]
+prompt: |
+  Summarize the following text. Be concise and capture the key points.
+  Length preference: {{length}}
+  Text: {{text}}
