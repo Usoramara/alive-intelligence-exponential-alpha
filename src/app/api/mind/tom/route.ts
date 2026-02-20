@@ -18,7 +18,7 @@ interface TomResult {
 
 export const POST = createApiHandler({
   schema: tomRequestSchema,
-  handler: async (body) => {
+  handler: async (body, _userId) => {
     const beliefsContext = body.existingBeliefs && Object.keys(body.existingBeliefs).length > 0
       ? `\nExisting beliefs about this person: ${JSON.stringify(body.existingBeliefs)}`
       : '';

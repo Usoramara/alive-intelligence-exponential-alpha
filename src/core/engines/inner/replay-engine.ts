@@ -2,7 +2,14 @@ import { Engine } from '../../engine';
 import { ENGINE_IDS, SIGNAL_PRIORITIES } from '../../constants';
 import type { Signal, SignalType } from '../../types';
 import { isSignal } from '../../types';
-import { getMemories } from '@/lib/indexed-db';
+
+interface MemoryResult {
+  id: string;
+  content: string;
+  type: string;
+  significance: number;
+  createdAt: string;
+}
 
 export class ReplayEngine extends Engine {
   private lastReplay = 0;
@@ -55,21 +62,29 @@ export class ReplayEngine extends Engine {
     this.lastReplay = now;
 
     try {
-      // Get significant memories to replay
-      const memories = await getMemories({ minSignificance: 0.5, limit: 10 });
-      if (memories.length === 0) {
-        this.debugInfo = 'No memories to replay';
+      // Get recent memories from server API
+      const response = await fetch('/api/user/memories?limit=10');
+      if (!response.ok) {
+        this.debugInfo = 'No memories to replay (not authenticated?)';
+        return;
+      }
+
+      const { memories } = (await response.json()) as { memories: MemoryResult[] };
+      // Filter to significant memories
+      const significant = memories.filter(m => m.significance >= 0.5);
+      if (significant.length === 0) {
+        this.debugInfo = 'No significant memories to replay';
         return;
       }
 
       // Select a random significant memory
-      const memory = memories[Math.floor(Math.random() * memories.length)];
+      const memory = significant[Math.floor(Math.random() * significant.length)];
 
       this.status = 'processing';
 
       this.emit('replay-memory', {
         memory: memory.content,
-        originalTimestamp: memory.timestamp,
+        originalTimestamp: new Date(memory.createdAt).getTime(),
         significance: memory.significance,
         type: memory.type,
       }, {

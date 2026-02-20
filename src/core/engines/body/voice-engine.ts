@@ -9,23 +9,31 @@ interface VoiceOutput {
 }
 
 export type VoiceListener = (text: string) => void;
+export type VoicePartialListener = (delta: string, accumulated: string) => void;
 
 export class VoiceEngine extends Engine {
   private outputHistory: VoiceOutput[] = [];
   private listeners = new Set<VoiceListener>();
+  private partialListeners = new Set<VoicePartialListener>();
 
   constructor() {
     super(ENGINE_IDS.VOICE);
   }
 
   protected subscribesTo(): SignalType[] {
-    return ['voice-output'];
+    return ['voice-output', 'voice-output-partial'];
   }
 
-  // External code can listen to voice output (for the UI)
+  // External code can listen to complete voice output (for the UI)
   onOutput(listener: VoiceListener): () => void {
     this.listeners.add(listener);
     return () => this.listeners.delete(listener);
+  }
+
+  // External code can listen to streaming partial output
+  onPartialOutput(listener: VoicePartialListener): () => void {
+    this.partialListeners.add(listener);
+    return () => this.partialListeners.delete(listener);
   }
 
   getHistory(): VoiceOutput[] {
@@ -52,8 +60,22 @@ export class VoiceEngine extends Engine {
           }
         }
 
-        // TTS will be added in Phase 7
         this.debugInfo = `Said: "${payload.text.slice(0, 30)}..."`;
+      }
+
+      if (isSignal(signal, 'voice-output-partial')) {
+        const payload = signal.payload;
+
+        // Notify partial listeners
+        for (const listener of this.partialListeners) {
+          try {
+            listener(payload.delta, payload.accumulatedText);
+          } catch (e) {
+            console.error('Voice partial listener error:', e);
+          }
+        }
+
+        this.debugInfo = `Streaming: "${payload.accumulatedText.slice(-30)}..."`;
       }
     }
     this.status = 'idle';

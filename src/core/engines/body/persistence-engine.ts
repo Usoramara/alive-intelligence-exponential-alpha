@@ -2,7 +2,6 @@ import { Engine } from '../../engine';
 import { ENGINE_IDS } from '../../constants';
 import { isSignal } from '../../types';
 import type { Signal, SignalType } from '../../types';
-import { saveState, loadState } from '@/lib/indexed-db';
 
 export class PersistenceEngine extends Engine {
   private lastSave = 0;
@@ -40,7 +39,11 @@ export class PersistenceEngine extends Engine {
 
     try {
       const selfState = this.selfState.get();
-      await saveState('selfState', selfState);
+      await fetch('/api/user/state', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(selfState),
+      });
       this.debugInfo = `Saved @ ${new Date().toLocaleTimeString()}`;
     } catch (err) {
       this.debugInfo = `Save error: ${err}`;
@@ -49,10 +52,15 @@ export class PersistenceEngine extends Engine {
 
   async restore(): Promise<void> {
     try {
-      const selfState = await loadState<ReturnType<typeof this.selfState.get>>('selfState');
-      if (selfState) {
+      const response = await fetch('/api/user/state');
+      if (!response.ok) {
+        this.debugInfo = 'No saved state (not authenticated or no data)';
+        return;
+      }
+      const selfState = await response.json();
+      if (selfState && typeof selfState.valence === 'number') {
         this.selfState.restore(selfState);
-        this.debugInfo = 'State restored';
+        this.debugInfo = 'State restored from server';
 
         this.emit('state-restored', { selfState }, {
           priority: 50,

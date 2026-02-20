@@ -2,7 +2,6 @@ import { Engine } from '../../engine';
 import { ENGINE_IDS } from '../../constants';
 import { isSignal } from '../../types';
 import type { Signal, SignalType } from '../../types';
-import { saveMemory, type MemoryRecord } from '@/lib/indexed-db';
 
 interface MemorySignificance {
   content: string;
@@ -49,17 +48,17 @@ export class MemoryWriteEngine extends Engine {
     this.writeQueue = [];
 
     for (const item of items) {
-      const record: MemoryRecord = {
-        id: `mem_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-        type: this.classifyType(item.type),
-        content: item.content,
-        timestamp: Date.now(),
-        significance: item.significance,
-        tags: item.tags ?? [],
-      };
-
       try {
-        await saveMemory(record);
+        await fetch('/api/user/memories', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            type: this.classifyType(item.type),
+            content: item.content,
+            significance: item.significance,
+            tags: item.tags ?? [],
+          }),
+        });
       } catch (err) {
         console.error('Memory write error:', err);
       }
@@ -68,7 +67,7 @@ export class MemoryWriteEngine extends Engine {
     this.debugInfo = `Wrote ${items.length} memories`;
   }
 
-  private classifyType(type: string): MemoryRecord['type'] {
+  private classifyType(type: string): string {
     switch (type) {
       case 'response':
       case 'conversation':

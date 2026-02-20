@@ -14,7 +14,7 @@ interface ImagineResult {
 
 export const POST = createApiHandler({
   schema: imagineRequestSchema,
-  handler: async (body) => {
+  handler: async (body, _userId) => {
     const variationsStr = body.variations
       .map(v => `- [${v.type}]: ${v.variation}`)
       .join('\n');

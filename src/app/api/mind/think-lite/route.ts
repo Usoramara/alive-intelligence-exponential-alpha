@@ -9,7 +9,7 @@ const client = getAnthropicClient();
 
 export const POST = createApiHandler({
   schema: thinkLiteParamsSchema,
-  handler: async (params) => {
+  handler: async (params, _userId) => {
     const stateDesc = [
       params.selfState.valence > 0.3 ? 'positive' : params.selfState.valence < -0.3 ? 'negative' : 'neutral',
       params.selfState.energy < 0.3 ? 'low energy' : '',

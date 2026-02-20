@@ -4,7 +4,7 @@ import { thinkParamsSchema } from '@/lib/schemas';
 
 export const POST = createApiHandler({
   schema: thinkParamsSchema,
-  handler: async (body) => {
-    return await think(body);
+  handler: async (body, userId) => {
+    return await think(body, undefined, userId ?? undefined);
   },
 });

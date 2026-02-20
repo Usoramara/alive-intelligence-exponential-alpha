@@ -1,53 +1,29 @@
 import { NextResponse } from 'next/server';
+import { auth } from '@clerk/nextjs/server';
 import type { ZodSchema, ZodError } from 'zod';
 
 const isDev = process.env.NODE_ENV === 'development';
 
-function checkOrigin(request: Request): boolean {
-  if (isDev) return true;
-
-  const origin = request.headers.get('origin');
-  const referer = request.headers.get('referer');
-  const source = origin || (referer ? new URL(referer).origin : null);
-
-  if (!source) return false;
-
-  const allowed = new Set<string>();
-
-  // Same-origin: Vercel provides this
-  const vercelUrl = process.env.VERCEL_URL;
-  if (vercelUrl) {
-    allowed.add(`https://${vercelUrl}`);
-  }
-
-  // Custom allowed origins
-  const extra = process.env.ALLOWED_ORIGINS;
-  if (extra) {
-    for (const o of extra.split(',')) {
-      const trimmed = o.trim();
-      if (trimmed) allowed.add(trimmed);
-    }
-  }
-
-  // In production on Vercel, also allow the deployment URL from the request itself
-  const host = request.headers.get('host');
-  if (host) {
-    allowed.add(`https://${host}`);
-  }
-
-  return allowed.has(source);
-}
-
 interface ApiHandlerOptions<T> {
   schema: ZodSchema<T>;
-  handler: (body: T) => Promise<NextResponse | object>;
+  handler: (body: T, userId: string | null) => Promise<NextResponse | object>;
+  requireAuth?: boolean; // default: true in production, false in dev
 }
 
-export function createApiHandler<T>({ schema, handler }: ApiHandlerOptions<T>) {
+export function createApiHandler<T>({ schema, handler, requireAuth }: ApiHandlerOptions<T>) {
   return async function POST(request: Request): Promise<NextResponse> {
-    // Origin check
-    if (!checkOrigin(request)) {
-      return NextResponse.json({ error: 'Forbidden' }, { status: 403 });
+    // Auth check
+    let userId: string | null = null;
+    try {
+      const session = await auth();
+      userId = session.userId;
+    } catch {
+      // Auth not available (e.g., missing Clerk keys in dev)
+    }
+
+    const authRequired = requireAuth ?? !isDev;
+    if (authRequired && !userId) {
+      return NextResponse.json({ error: 'Unauthorized' }, { status: 401 });
     }
 
     // Parse and validate body
@@ -68,7 +44,7 @@ export function createApiHandler<T>({ schema, handler }: ApiHandlerOptions<T>) {
 
     // Execute handler
     try {
-      const result = await handler(body);
+      const result = await handler(body, userId);
       if (result instanceof NextResponse) {
         return result;
       }

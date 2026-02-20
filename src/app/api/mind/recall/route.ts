@@ -1,49 +1,48 @@
 import { NextResponse } from 'next/server';
-import { getAnthropicClient } from '@/lib/anthropic';
-import { createApiHandler } from '@/lib/api-handler';
-import { recallParamsSchema } from '@/lib/schemas';
-import { extractJSON } from '@/lib/extract-json';
+import { auth } from '@clerk/nextjs/server';
+import { searchMemories } from '@/lib/memory/manager';
+import { z } from 'zod';
 
-const client = getAnthropicClient();
-
-export const POST = createApiHandler({
-  schema: recallParamsSchema,
-  handler: async ({ query, candidates }) => {
-    if (candidates.length === 0) {
-      return NextResponse.json({ ranked: [] });
-    }
-
-    const memoriesList = candidates
-      .map((m, i) => `[${i}] "${m.content}"`)
-      .join('\n');
-
-    const response = await client.messages.create({
-      model: 'claude-haiku-4-5-20251001',
-      max_tokens: 200,
-      system: `You are a memory relevance scoring system. Given a query and a list of memories, score each memory's relevance from 0.0 to 1.0.
-Consider semantic similarity, emotional connection, and contextual relevance — not just keyword overlap.
-"My cat died" is highly relevant to "I love Whiskers" even though they share no words.
-Return ONLY valid JSON: {"scores": [0.8, 0.2, 0.9, ...]} matching the order of memories provided.`,
-      messages: [
-        {
-          role: 'user',
-          content: `Query: "${query}"\n\nMemories:\n${memoriesList}`,
-        },
-      ],
-    });
-
-    const responseText = response.content
-      .filter(b => b.type === 'text')
-      .map(b => b.text)
-      .join('');
-
-    const { scores } = JSON.parse(extractJSON(responseText)) as { scores: number[] };
-
-    const ranked = candidates
-      .map((m, i) => ({ ...m, relevance: scores[i] ?? 0 }))
-      .sort((a, b) => b.relevance - a.relevance)
-      .filter(m => m.relevance > 0.2);
-
-    return { ranked };
-  },
+const recallSchema = z.object({
+  query: z.string().min(1).max(10_000),
+  limit: z.number().int().min(1).max(50).optional(),
 });
+
+export async function POST(request: Request): Promise<NextResponse> {
+  // Auth check
+  let userId: string | null = null;
+  try {
+    const session = await auth();
+    userId = session.userId;
+  } catch {
+    // Auth not available in dev
+  }
+
+  let body: z.infer<typeof recallSchema>;
+  try {
+    const raw = await request.json();
+    const result = recallSchema.safeParse(raw);
+    if (!result.success) {
+      return NextResponse.json({ error: 'Invalid request' }, { status: 400 });
+    }
+    body = result.data;
+  } catch {
+    return NextResponse.json({ error: 'Invalid JSON' }, { status: 400 });
+  }
+
+  if (!userId) {
+    // Return empty results if not authenticated (dev mode graceful degradation)
+    return NextResponse.json({ ranked: [] });
+  }
+
+  const results = await searchMemories(userId, body.query, body.limit ?? 10);
+
+  return NextResponse.json({
+    ranked: results.map(r => ({
+      id: r.id,
+      content: r.content,
+      relevance: r.similarity ?? 0,
+      type: r.type,
+    })),
+  });
+}

@@ -7,7 +7,7 @@ const client = getAnthropicClient();
 
 export const POST = createApiHandler({
   schema: detectEmotionParamsSchema,
-  handler: async ({ text, context }) => {
+  handler: async ({ text, context }, _userId) => {
     const response = await client.messages.create({
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 150,

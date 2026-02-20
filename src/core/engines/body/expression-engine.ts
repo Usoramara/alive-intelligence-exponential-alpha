@@ -36,7 +36,7 @@ export class ExpressionEngine extends Engine {
   }
 
   protected subscribesTo(): SignalType[] {
-    return ['expression-update', 'empathic-state', 'love-field-update', 'voice-output'];
+    return ['expression-update', 'empathic-state', 'love-field-update', 'voice-output', 'voice-output-partial'];
   }
 
   getExpressionState(): ExpressionState {
@@ -58,6 +58,11 @@ export class ExpressionEngine extends Engine {
         setTimeout(() => {
           this.expressionState.speaking = false;
         }, duration);
+      }
+
+      if (isSignal(signal, 'voice-output-partial')) {
+        // During streaming, show speaking animation
+        this.expressionState.speaking = true;
       }
 
       if (isSignal(signal, 'empathic-state')) {

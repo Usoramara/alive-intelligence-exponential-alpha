@@ -51,6 +51,7 @@ export type SignalType =
   | 'safety-clear'
   // Output signals
   | 'voice-output'
+  | 'voice-output-partial'
   | 'expression-update'
   | 'motor-command'
   | 'locomotion-update'
@@ -69,6 +70,8 @@ export type SignalType =
   | 'metacognition-update'
   // Resource management signals
   | 'resource-budget'
+  // Tool activity signals
+  | 'tool-activity'
   // System signals
   | 'engine-status'
   | 'persist-state'

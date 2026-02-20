@@ -69,6 +69,7 @@ export interface SignalPayloadMap {
 
   // Output signals
   'voice-output': { text: string; timestamp: number };
+  'voice-output-partial': { delta: string; accumulatedText: string; timestamp: number };
   'expression-update': { speaking?: boolean; text?: string; [key: string]: unknown };
   'motor-command': { action: string; reason?: string };
   'locomotion-update': { action: string; reason?: string };
@@ -92,6 +93,9 @@ export interface SignalPayloadMap {
 
   // Resource management signals
   'resource-budget': { sonnetRemaining: number; suggestedMaxTokens: number; useLite: boolean };
+
+  // Tool activity signals
+  'tool-activity': { toolName: string; status: 'started' | 'completed' | 'error'; input?: Record<string, unknown>; result?: string };
 
   // System signals
   'engine-status': { engine: EngineId; status: string; action?: string };

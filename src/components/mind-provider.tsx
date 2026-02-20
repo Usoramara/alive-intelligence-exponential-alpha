@@ -53,8 +53,9 @@ import { LocomotionEngine } from '@/core/engines/body/locomotion-engine';
 import { SyncEngine } from '@/core/engines/thalamus/sync-engine';
 
 export const MindContext = createContext<CognitiveLoop | null>(null);
+export const ConversationIdContext = createContext<string | undefined>(undefined);
 
-export function MindProvider({ children }: { children: ReactNode }) {
+export function MindProvider({ children, conversationId }: { children: ReactNode; conversationId?: string }) {
   const loopRef = useRef<CognitiveLoop | null>(null);
   const bridgeRef = useRef<ThoughtBridge | null>(null);
 
@@ -136,7 +137,9 @@ export function MindProvider({ children }: { children: ReactNode }) {
 
   return (
     <MindContext.Provider value={loopRef.current}>
-      {children}
+      <ConversationIdContext.Provider value={conversationId}>
+        {children}
+      </ConversationIdContext.Provider>
     </MindContext.Provider>
   );
 }

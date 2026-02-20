@@ -7,7 +7,7 @@ const client = getAnthropicClient();
 
 export const POST = createApiHandler({
   schema: growParamsSchema,
-  handler: async ({ exchanges, emotionalTrajectory }) => {
+  handler: async ({ exchanges, emotionalTrajectory }, _userId) => {
     const conversationSummary = exchanges
       .map(e => `${e.role === 'user' ? 'User' : 'Wybe'}: ${e.content}`)
       .join('\n');

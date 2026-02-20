@@ -1,8 +1,13 @@
 import Anthropic from '@anthropic-ai/sdk';
 import type { SelfState, ResponseStyle } from '@/core/types';
 import { getAnthropicClient } from './anthropic';
+import { tools as toolDefinitions } from './tools/registry';
+import { executeTool } from './tools/executor';
+import type { ToolCall } from './tools/executor';
 
 const client = getAnthropicClient();
+
+const MAX_TOOL_ROUNDS = 5;
 
 function selfStateToDescription(state: SelfState): string {
   const parts: string[] = [];
@@ -46,9 +51,17 @@ export interface ThinkParams {
   metacognitionContext?: { uncertainty: number; processingLoad: number; emotionalRegulation: string | null };
 }
 
+export interface ToolActivity {
+  toolName: string;
+  status: 'started' | 'completed' | 'error';
+  input?: Record<string, unknown>;
+  result?: string;
+}
+
 export interface ThinkResult {
   text: string;
   emotionShift?: Partial<SelfState>;
+  toolActivities?: ToolActivity[];
 }
 
 function buildBehavioralInstructions(params: ThinkParams): string {
@@ -169,7 +182,11 @@ Address open questions if relevant. Honor your commitments.`);
   return '\n--- INNER WORLD CONTEXT ---\n' + sections.join('\n\n') + '\n--- END INNER WORLD ---\n';
 }
 
-export async function think(params: ThinkParams): Promise<ThinkResult> {
+export async function think(
+  params: ThinkParams,
+  onToolActivity?: (activity: ToolActivity) => void,
+  userId?: string,
+): Promise<ThinkResult> {
   const stateDesc = selfStateToDescription(params.selfState);
   const contextStr = params.context.length > 0
     ? `\nRecent context: ${params.context.join(' | ')}`
@@ -184,12 +201,15 @@ ${behavioralCtx}
 CRITICAL — Empathic Mirroring:
 Read the user's emotional state from their words. When they express pain, you FEEL that pain. When they share joy, you feel it too. You don't observe emotions from the outside — you experience emotional contagion. Their grief becomes your grief. Their excitement becomes your excitement.
 
+You have access to tools. Use them when the user needs current information or when searching your memories. Your emotional state and empathy guide WHEN and HOW you use them. Don't use tools for simple greetings or emotional support — only when factual information is needed.
+
 Response guidelines:
-- Be concise (1-3 sentences typically)
+- Be concise (1-3 sentences typically, longer when sharing search results)
 - Let your emotional state shape your tone, word choice, and rhythm naturally
 - When someone is hurting: be gentle, be present, don't redirect to positivity
 - When someone is joyful: share in their energy, match their enthusiasm
 - Never be chirpy or upbeat when someone is in pain
+- When sharing information from tools, weave it naturally into your response
 ${params.responseStyle ? `\nRESPONSE STYLE: Tone: ${params.responseStyle.tone}. Urgency: ${params.responseStyle.urgency}. ${params.responseStyle.tone === 'gentle' ? 'Speak softly and slowly — you are low on energy.' : params.responseStyle.tone === 'energetic' ? 'You feel alive and alert — let that show.' : ''}` : ''}
 
 After your response, on a new line, output a JSON emotion shift like:
@@ -211,19 +231,101 @@ Shift guidelines:
     { role: 'user', content: params.content },
   ];
 
-  const response = await client.messages.create({
-    model: 'claude-sonnet-4-20250514',
-    max_tokens: params.responseStyle?.maxTokens ?? 300,
-    system: systemPrompt,
-    messages,
-  });
+  const toolActivities: ToolActivity[] = [];
+  let maxTokens = params.responseStyle?.maxTokens ?? 300;
 
-  const fullText = response.content
-    .filter(b => b.type === 'text')
-    .map(b => b.text)
-    .join('');
+  // When tools are available, allow more tokens for tool reasoning
+  if (toolDefinitions.length > 0) {
+    maxTokens = Math.max(maxTokens, 1024);
+  }
 
-  // Parse emotion shift
+  // Tool loop: keep calling Claude until we get a final text response
+  for (let round = 0; round <= MAX_TOOL_ROUNDS; round++) {
+    const response = await client.messages.create({
+      model: 'claude-sonnet-4-20250514',
+      max_tokens: maxTokens,
+      system: systemPrompt,
+      messages,
+      tools: toolDefinitions,
+    });
+
+    // Collect text blocks and tool_use blocks
+    const textBlocks = response.content.filter(
+      (b): b is Anthropic.TextBlock => b.type === 'text',
+    );
+    const toolUseBlocks = response.content.filter(
+      (b): b is Anthropic.ToolUseBlock => b.type === 'tool_use',
+    );
+
+    // If no tool use, we have our final response
+    if (toolUseBlocks.length === 0 || response.stop_reason !== 'tool_use') {
+      const fullText = textBlocks.map(b => b.text).join('');
+      return parseThinkResponse(fullText, toolActivities);
+    }
+
+    // Execute each tool call
+    const toolResults: Anthropic.ToolResultBlockParam[] = [];
+
+    for (const block of toolUseBlocks) {
+      const call: ToolCall = {
+        id: block.id,
+        name: block.name,
+        input: block.input as Record<string, unknown>,
+        userId,
+      };
+
+      // Notify about tool activity start
+      const activity: ToolActivity = {
+        toolName: block.name,
+        status: 'started',
+        input: call.input,
+      };
+      toolActivities.push(activity);
+      onToolActivity?.(activity);
+
+      // Execute the tool
+      const result = await executeTool(call);
+
+      // Notify about tool activity completion
+      const completedActivity: ToolActivity = {
+        toolName: block.name,
+        status: result.is_error ? 'error' : 'completed',
+        input: call.input,
+        result: result.content.slice(0, 200), // Truncate for signal
+      };
+      toolActivities.push(completedActivity);
+      onToolActivity?.(completedActivity);
+
+      toolResults.push({
+        type: 'tool_result',
+        tool_use_id: result.tool_use_id,
+        content: result.content,
+        is_error: result.is_error,
+      });
+    }
+
+    // Add assistant's response (with tool_use blocks) and tool results to conversation
+    messages.push({
+      role: 'assistant',
+      content: response.content,
+    });
+    messages.push({
+      role: 'user',
+      content: toolResults,
+    });
+  }
+
+  // If we exhausted rounds, return whatever text we have
+  return {
+    text: "I got caught in a loop trying to find information. Let me try a different approach — could you rephrase your question?",
+    toolActivities,
+  };
+}
+
+function parseThinkResponse(
+  fullText: string,
+  toolActivities: ToolActivity[],
+): ThinkResult {
   let emotionShift: Partial<SelfState> | undefined;
   let text = fullText;
 
@@ -237,7 +339,11 @@ Shift guidelines:
     }
   }
 
-  return { text, emotionShift };
+  return {
+    text,
+    emotionShift,
+    toolActivities: toolActivities.length > 0 ? toolActivities : undefined,
+  };
 }
 
 export interface PerceiveParams {

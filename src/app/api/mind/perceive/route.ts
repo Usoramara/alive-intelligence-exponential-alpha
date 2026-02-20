@@ -4,7 +4,7 @@ import { perceiveParamsSchema } from '@/lib/schemas';
 
 export const POST = createApiHandler({
   schema: perceiveParamsSchema,
-  handler: async (body) => {
+  handler: async (body, _userId) => {
     return await perceive(body);
   },
 });

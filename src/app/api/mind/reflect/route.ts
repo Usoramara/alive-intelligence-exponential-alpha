@@ -11,7 +11,7 @@ const VALID_FLAVORS = new Set([
 
 export const POST = createApiHandler({
   schema: reflectParamsSchema,
-  handler: async ({ memories, mood, recentStream, count, flavorHints }) => {
+  handler: async ({ memories, mood, recentStream, count, flavorHints }, _userId) => {
     const safeMemories = memories ?? [];
     const thoughtCount = Math.min(Math.max(count ?? 1, 1), 12);
 
