@@ -23,10 +23,10 @@ export default function Home() {
         <header className="flex items-center justify-between shrink-0">
           <div>
             <h1 className="text-lg font-mono text-white/80 tracking-tight">
-              The Alive Intelligence
+              Wybe OS
             </h1>
             <p className="text-xs font-mono text-white/25">
-              Wybe&apos;s cognitive architecture — live
+              cognitive architecture — live
             </p>
           </div>
           <div className="flex gap-4">

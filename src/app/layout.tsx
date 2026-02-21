@@ -14,8 +14,8 @@ const hasClerkKeys =
   !process.env.NEXT_PUBLIC_CLERK_PUBLISHABLE_KEY?.includes('placeholder');
 
 export const metadata: Metadata = {
-  title: "The Alive Intelligence",
-  description: "Wybe's cognitive architecture — the mind itself, running in the browser",
+  title: "Wybe OS",
+  description: "Wybe OS — cognitive architecture, running in the browser",
 };
 
 export default function RootLayout({

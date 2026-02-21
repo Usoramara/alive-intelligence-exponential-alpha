@@ -53,7 +53,7 @@ export default function AppLayout({
           {/* Sidebar header */}
           <div className="p-3 border-b border-white/5 flex items-center justify-between">
             <Link href="/dashboard" className="text-sm font-mono text-white/70 hover:text-white/90">
-              Alive Intelligence
+              Wybe OS
             </Link>
             {hasClerkKeys && <UserButton afterSignOutUrl="/" />}
           </div>

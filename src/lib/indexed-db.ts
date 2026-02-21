@@ -1,4 +1,4 @@
-const DB_NAME = 'alive-intelligence';
+const DB_NAME = 'wybe-os';
 const DB_VERSION = 1;
 
 export interface MemoryRecord {
