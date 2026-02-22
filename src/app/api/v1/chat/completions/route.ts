@@ -88,7 +88,9 @@ export async function POST(request: Request): Promise<Response> {
     );
   }
 
-  const isStreaming = body.stream ?? false;
+  const isStreaming = !!body.stream;
+
+  console.log(`[voice] Request: stream=${body.stream} (isStreaming=${isStreaming}), messages=${body.messages?.length}, model=${body.model}`);
 
   const anthropicBody = {
     model: DEFAULT_MODEL,
@@ -99,15 +101,24 @@ export async function POST(request: Request): Promise<Response> {
   };
 
   // 7. Call Anthropic API — go straight, no enrichment delay
-  const upstreamResponse = await fetch(ANTHROPIC_API_URL, {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      'x-api-key': anthropicApiKey,
-      'anthropic-version': '2023-06-01',
-    },
-    body: JSON.stringify(anthropicBody),
-  });
+  let upstreamResponse: Response;
+  try {
+    upstreamResponse = await fetch(ANTHROPIC_API_URL, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': anthropicApiKey,
+        'anthropic-version': '2023-06-01',
+      },
+      body: JSON.stringify(anthropicBody),
+    });
+  } catch (fetchError) {
+    console.error('[voice] Fetch to Anthropic failed:', fetchError);
+    return jsonResponse(
+      { error: { message: 'Failed to reach upstream API', type: 'server_error', code: 'upstream_error' } },
+      502,
+    );
+  }
 
   if (!upstreamResponse.ok) {
     const errorBody = await upstreamResponse.text();
@@ -117,6 +128,8 @@ export async function POST(request: Request): Promise<Response> {
       502,
     );
   }
+
+  console.log(`[voice] Anthropic responded ${upstreamResponse.status}, streaming=${isStreaming}`);
 
   // 8. Convert response: Anthropic → OpenAI format
   const completionId = `chatcmpl-${generateId()}`;
@@ -266,12 +279,31 @@ function createOpenAIStreamFromAnthropic(
 ): ReadableStream<Uint8Array> {
   const encoder = new TextEncoder();
   const decoder = new TextDecoder();
-  const upstreamBody = upstreamResponse.body!;
+  const upstreamBody = upstreamResponse.body;
+
+  if (!upstreamBody) {
+    // No body — return a stream with just the done marker
+    const finishChunk = {
+      id: completionId,
+      object: 'chat.completion.chunk',
+      created: Math.floor(Date.now() / 1000),
+      model: DEFAULT_MODEL,
+      choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+    };
+    const done = `data: ${JSON.stringify(finishChunk)}\n\ndata: [DONE]\n\n`;
+    return new ReadableStream({
+      start(controller) {
+        controller.enqueue(encoder.encode(done));
+        controller.close();
+      },
+    });
+  }
 
   let accumulatedText = '';
   let pendingTextChunks: string[] = [];
   let buffering = false;
   let sseRemainder = '';
+  let sentRoleChunk = false;
 
   const transform = new TransformStream<Uint8Array, Uint8Array>({
     transform(chunk, controller) {
@@ -314,6 +346,19 @@ function createOpenAIStreamFromAnthropic(
     const { isTextDelta, text } = parseAnthropicSSE(event);
 
     if (!isTextDelta || text === null) return;
+
+    // Emit the initial role chunk before the first content delta (OpenAI spec)
+    if (!sentRoleChunk) {
+      sentRoleChunk = true;
+      const roleChunk = {
+        id: completionId,
+        object: 'chat.completion.chunk',
+        created: Math.floor(Date.now() / 1000),
+        model: DEFAULT_MODEL,
+        choices: [{ index: 0, delta: { role: 'assistant', content: '' }, finish_reason: null }],
+      };
+      controller.enqueue(encoder.encode(`data: ${JSON.stringify(roleChunk)}\n\n`));
+    }
 
     accumulatedText += text;
 
