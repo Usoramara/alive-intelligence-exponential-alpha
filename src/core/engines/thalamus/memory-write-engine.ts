@@ -12,7 +12,10 @@ interface MemorySignificance {
 
 export class MemoryWriteEngine extends Engine {
   private writeQueue: MemorySignificance[] = [];
+  private retryQueue: { item: MemorySignificance; attempts: number }[] = [];
   private significanceThreshold = 0.4;
+  private readonly MAX_RETRIES = 3;
+  private readonly MAX_QUEUE_SIZE = 50;
 
   constructor() {
     super(ENGINE_IDS.MEMORY_WRITE);
@@ -35,8 +38,8 @@ export class MemoryWriteEngine extends Engine {
       }
     }
 
-    // Batch write
-    if (this.writeQueue.length > 0) {
+    // Batch write (includes retries)
+    if (this.writeQueue.length > 0 || this.retryQueue.length > 0) {
       this.flushWrites();
     }
 
@@ -44,27 +47,49 @@ export class MemoryWriteEngine extends Engine {
   }
 
   private async flushWrites(): Promise<void> {
-    const items = [...this.writeQueue];
+    const freshItems = this.writeQueue.map(item => ({ item, attempts: 0 }));
+    const allItems = [...this.retryQueue, ...freshItems];
     this.writeQueue = [];
+    this.retryQueue = [];
 
-    for (const item of items) {
+    // Backpressure: drop oldest low-significance items if queue overflows
+    if (allItems.length > this.MAX_QUEUE_SIZE) {
+      allItems.sort((a, b) => b.item.significance - a.item.significance);
+      const dropped = allItems.length - this.MAX_QUEUE_SIZE;
+      allItems.length = this.MAX_QUEUE_SIZE;
+      console.warn(`Memory write backpressure: dropped ${dropped} low-significance items`);
+    }
+
+    let written = 0;
+    let failed = 0;
+
+    for (const entry of allItems) {
       try {
-        await fetch('/api/user/memories', {
+        const res = await fetch('/api/user/memories', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({
-            type: this.classifyType(item.type),
-            content: item.content,
-            significance: item.significance,
-            tags: item.tags ?? [],
+            type: this.classifyType(entry.item.type),
+            content: entry.item.content,
+            significance: entry.item.significance,
+            tags: entry.item.tags ?? [],
           }),
         });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        written++;
       } catch (err) {
-        console.error('Memory write error:', err);
+        entry.attempts++;
+        if (entry.attempts < this.MAX_RETRIES) {
+          this.retryQueue.push(entry);
+          failed++;
+        } else {
+          console.error(`Memory write failed after ${this.MAX_RETRIES} attempts:`, err);
+          failed++;
+        }
       }
     }
 
-    this.debugInfo = `Wrote ${items.length} memories`;
+    this.debugInfo = `Wrote ${written}${failed > 0 ? `, ${failed} failed` : ''}${this.retryQueue.length > 0 ? `, ${this.retryQueue.length} pending retry` : ''} memories`;
   }
 
   private classifyType(type: string): string {

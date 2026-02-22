@@ -92,12 +92,15 @@ export class AttentionEngine extends Engine {
         const recencyFactor = (now - lastSeen) / this.NOVELTY_DECAY;
         score *= 0.3 + 0.7 * recencyFactor;
       }
+      // Delete-and-reinsert to maintain LRU order via Map insertion order
+      this.noveltyMap.delete(hash);
       this.noveltyMap.set(hash, now);
+      // Evict oldest entries (first in insertion order) when over limit
       if (this.noveltyMap.size > this.MAX_NOVELTY_ENTRIES) {
-        const entries = [...this.noveltyMap.entries()];
-        entries.sort((a, b) => a[1] - b[1]);
-        for (let i = 0; i < entries.length - this.MAX_NOVELTY_ENTRIES; i++) {
-          this.noveltyMap.delete(entries[i][0]);
+        const iter = this.noveltyMap.keys();
+        const excess = this.noveltyMap.size - this.MAX_NOVELTY_ENTRIES;
+        for (let i = 0; i < excess; i++) {
+          this.noveltyMap.delete(iter.next().value!);
         }
       }
 
