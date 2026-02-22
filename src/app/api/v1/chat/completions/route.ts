@@ -24,6 +24,16 @@ export async function POST(request: Request): Promise<Response> {
     request.headers.get('authorization')?.replace(/^Bearer\s+/i, '');
   const gatewayKey = process.env.WYBE_GATEWAY_API_KEY;
 
+  // Debug: log auth details (remove after debugging)
+  console.log('[openai-compat] Auth debug:', {
+    hasXApiKey: !!request.headers.get('x-api-key'),
+    hasAuth: !!request.headers.get('authorization'),
+    authPrefix: request.headers.get('authorization')?.slice(0, 20),
+    apiKeyPrefix: apiKey?.slice(0, 15),
+    gatewayKeyPrefix: gatewayKey?.slice(0, 15),
+    match: apiKey === gatewayKey,
+  });
+
   if (!gatewayKey || apiKey !== gatewayKey) {
     return jsonResponse(
       { error: { message: 'Invalid API key', type: 'authentication_error', code: 'invalid_api_key' } },
