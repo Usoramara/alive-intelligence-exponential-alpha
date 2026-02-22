@@ -34,6 +34,9 @@ export default function OpenClawPage() {
           )}
         </div>
         <div className="flex gap-4">
+          <Link href="/intelligence" className="text-xs font-mono text-white/25 hover:text-white/50 transition-colors">
+            Intelligence &rarr;
+          </Link>
           <Link href="/system" className="text-xs font-mono text-white/25 hover:text-white/50 transition-colors">
             System &rarr;
           </Link>

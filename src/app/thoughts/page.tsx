@@ -26,6 +26,9 @@ export default function ThoughtsPage() {
             </h1>
           </div>
           <div className="flex items-center gap-4">
+            <Link href="/intelligence" className="text-xs font-mono text-white/30 hover:text-white/60 transition-colors">
+              Intelligence →
+            </Link>
             <Link href="/system" className="text-xs font-mono text-white/30 hover:text-white/60 transition-colors">
               System →
             </Link>

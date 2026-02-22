@@ -52,7 +52,7 @@ export default function AppLayout({
         <aside className="w-60 shrink-0 bg-white/[0.02] border-r border-white/5 flex flex-col">
           {/* Sidebar header */}
           <div className="p-3 border-b border-white/5 flex items-center justify-between">
-            <Link href="/dashboard" className="text-sm font-mono text-white/70 hover:text-white/90">
+            <Link href="/" className="text-sm font-mono text-white/70 hover:text-white/90">
               Wybe OS
             </Link>
             {hasClerkKeys && <UserButton afterSignOutUrl="/" />}
@@ -93,6 +93,12 @@ export default function AppLayout({
 
           {/* Bottom links */}
           <div className="p-2 border-t border-white/5">
+            <Link
+              href="/intelligence"
+              className="block px-3 py-2 text-xs font-mono text-white/30 hover:text-white/60 transition-colors"
+            >
+              Intelligence
+            </Link>
             <Link
               href="/settings"
               className="block px-3 py-2 text-xs font-mono text-white/30 hover:text-white/60 transition-colors"

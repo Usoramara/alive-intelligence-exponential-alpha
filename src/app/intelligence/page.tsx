@@ -14,7 +14,7 @@ import { Face } from '@/components/face/face';
 import { StreamPanel } from '@/components/panels/stream-panel';
 import type { EngineId } from '@/core/constants';
 
-export default function Home() {
+export default function IntelligencePage() {
   const [selectedEngine, setSelectedEngine] = useState<EngineId | null>(null);
 
   return (
@@ -22,23 +22,31 @@ export default function Home() {
       <main className="h-screen w-screen flex flex-col p-4 gap-4">
         {/* Header */}
         <header className="flex items-center justify-between shrink-0">
-          <div>
-            <h1 className="text-lg font-mono text-white/80 tracking-tight">
-              Wybe OS
-            </h1>
-            <p className="text-xs font-mono text-white/25">
-              cognitive architecture — live
-            </p>
+          <div className="flex items-center gap-4">
+            <Link
+              href="/"
+              className="text-xs font-mono text-white/30 hover:text-white/60 transition-colors"
+            >
+              &larr; Back
+            </Link>
+            <div>
+              <h1 className="text-lg font-mono text-white/80 tracking-tight">
+                Wybe OS
+              </h1>
+              <p className="text-xs font-mono text-white/25">
+                cognitive architecture — live
+              </p>
+            </div>
           </div>
           <div className="flex gap-4">
             <Link href="/system" className="text-xs font-mono text-white/25 hover:text-white/50 transition-colors">
-              System →
+              System &rarr;
             </Link>
             <Link href="/openclaw" className="text-xs font-mono text-white/25 hover:text-white/50 transition-colors">
-              OpenClaw →
+              OpenClaw &rarr;
             </Link>
             <Link href="/thoughts" className="text-xs font-mono text-white/25 hover:text-white/50 transition-colors">
-              Thoughts →
+              Thoughts &rarr;
             </Link>
           </div>
         </header>

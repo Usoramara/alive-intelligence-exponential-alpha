@@ -95,6 +95,9 @@ export default function SystemPage() {
           </h1>
         </div>
         <div className="flex gap-4">
+          <Link href="/intelligence" className="text-xs font-mono text-white/25 hover:text-white/50 transition-colors">
+            Intelligence →
+          </Link>
           <Link href="/openclaw" className="text-xs font-mono text-white/25 hover:text-white/50 transition-colors">
             OpenClaw →
           </Link>
