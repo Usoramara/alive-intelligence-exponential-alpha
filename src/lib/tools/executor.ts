@@ -14,6 +14,7 @@ import { executeCode } from './code-exec';
 import { sendEmail } from './email';
 import { getWeather } from './weather';
 import { searchMemories } from '@/lib/memory/manager';
+import { isOpenClawTool, getOriginalToolName, executeOpenClawTool } from '@/lib/openclaw-tool-bridge';
 
 export interface ToolCall {
   id: string;
@@ -191,12 +192,26 @@ export async function executeTool(call: ToolCall): Promise<ToolResult> {
         });
         break;
 
-      default:
+      default: {
+        // Try OpenClaw bridge for unknown or openclaw_* prefixed tools
+        if (isOpenClawTool(call.name)) {
+          const bridgeResult = await executeOpenClawTool(
+            getOriginalToolName(call.name),
+            call.input,
+            call.id,
+          );
+          return {
+            tool_use_id: call.id,
+            content: bridgeResult.result,
+            is_error: bridgeResult.is_error,
+          };
+        }
         return {
           tool_use_id: call.id,
           content: `Unknown tool: ${call.name}`,
           is_error: true,
         };
+      }
     }
 
     return {

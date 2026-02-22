@@ -1,6 +1,16 @@
 import type Anthropic from '@anthropic-ai/sdk';
+import { discoverOpenClawTools, openClawToolsAsDefinitions } from '@/lib/openclaw-tool-bridge';
 
 export type ToolDefinition = Anthropic.Tool;
+
+/**
+ * Get the full tool registry: core Wybe tools + discovered OpenClaw tools.
+ * OpenClaw tools are prefixed with `openclaw_` to avoid name collisions.
+ */
+export async function getFullToolRegistry(): Promise<ToolDefinition[]> {
+  const openClawTools = await discoverOpenClawTools().catch(() => []);
+  return [...tools, ...openClawToolsAsDefinitions(openClawTools)];
+}
 
 export const tools: ToolDefinition[] = [
   {

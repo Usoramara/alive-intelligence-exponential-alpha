@@ -6,6 +6,8 @@
  * Enhanced with media attachment processing: images are described via
  * Claude Vision, audio is transcribed, and the results are included
  * in the think() context.
+ *
+ * Conversation histories are persisted to DB with LRU cache (survives restarts).
  */
 
 import { think, type ThinkParams } from '@/lib/claude';
@@ -13,6 +15,7 @@ import { getDb } from '@/db';
 import { cognitiveStates } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import type { IncomingMessage, OutgoingMessage, ChannelAdapter, Attachment } from './adapter';
+import { getHistory, appendMessage } from './history-store';
 
 // Default self state for channel-only users
 const DEFAULT_STATE = {
@@ -23,11 +26,6 @@ const DEFAULT_STATE = {
   social: 0.4,
   curiosity: 0.6,
 };
-
-// Per-user conversation history (in-memory, scoped to server lifetime)
-const channelHistories = new Map<string, Array<{ role: 'user' | 'assistant'; content: string }>>();
-
-const MAX_HISTORY = 20;
 
 /**
  * Process media attachments and generate text descriptions.
@@ -119,31 +117,31 @@ export async function handleChannelMessage(
     }
   }
 
-  // Get or create conversation history for this channel user
-  const historyKey = `${message.channelType}:${message.channelUserId}`;
-  let history = channelHistories.get(historyKey) ?? [];
+  // Get conversation history from DB-backed store (with LRU cache)
+  const history = await getHistory(userId, message.channelType, message.channelUserId);
 
   // Add user message to history
-  history.push({ role: 'user', content: messageText });
-  if (history.length > MAX_HISTORY * 2) {
-    history = history.slice(-MAX_HISTORY * 2);
-  }
-  channelHistories.set(historyKey, history);
+  await appendMessage(userId, message.channelType, message.channelUserId, {
+    role: 'user',
+    content: messageText,
+  });
 
   // Build think params
   const params: ThinkParams = {
     content: messageText,
     context: [`Channel: ${message.channelType}`],
     selfState,
-    conversationHistory: history.slice(0, -1),
+    conversationHistory: history, // Previous messages (before this one)
   };
 
   // Process through Wybe's cognitive pipeline
   const result = await think(params, undefined, userId);
 
-  // Add assistant response to history
-  history.push({ role: 'assistant', content: result.text });
-  channelHistories.set(historyKey, history);
+  // Add assistant response to history (persists to DB)
+  await appendMessage(userId, message.channelType, message.channelUserId, {
+    role: 'assistant',
+    content: result.text,
+  });
 
   // Update cognitive state if there was an emotion shift
   if (result.emotionShift) {

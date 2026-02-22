@@ -4,8 +4,46 @@
  * Wybe's cognitive processing pipeline.
  */
 
+/**
+ * Channels with native Wybe adapters.
+ */
+export type NativeChannelType = 'telegram' | 'slack' | 'discord' | 'whatsapp';
+
+/**
+ * Channels routed through the OpenClaw bridge.
+ * These correspond to OpenClaw's natively supported channel types.
+ */
+export type OpenClawChannelType =
+  | 'messenger'
+  | 'instagram'
+  | 'twitter'
+  | 'line'
+  | 'viber'
+  | 'wechat'
+  | 'signal'
+  | 'matrix'
+  | 'irc'
+  | 'email'
+  | 'sms'
+  | 'web'
+  | 'teams'
+  | 'rocketchat'
+  | 'mattermost'
+  | 'zulip'
+  | 'twitch'
+  | 'steam'
+  | 'revolt'
+  | 'xmpp'
+  | 'nostr'
+  | 'farcaster';
+
+/**
+ * Union of all supported channel types — native and OpenClaw-bridged.
+ */
+export type ChannelType = NativeChannelType | OpenClawChannelType;
+
 export interface IncomingMessage {
-  channelType: 'telegram' | 'slack' | 'discord' | 'whatsapp';
+  channelType: ChannelType;
   channelUserId: string; // Platform-specific user ID
   text: string;
   metadata?: Record<string, unknown>;

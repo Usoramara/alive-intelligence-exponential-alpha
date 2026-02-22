@@ -39,10 +39,14 @@ export class ThoughtBridge {
     activeInstance = this;
 
     this.bus = bus;
-    this.subscriptionId = bus.subscribe(
+    this.subscriptionId = this.bus.subscribe(
       ENGINE_IDS.ARBITER,  // Subscribe as arbiter to get thought signals
       ['thought'] as SignalType[],
-      (signal) => this.handleThought(signal)
+      (signal) => {
+        if (isSignal(signal, 'thought')) {
+          this.handleThought(signal);
+        }
+      }
     );
   }
 

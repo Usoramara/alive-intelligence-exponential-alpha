@@ -3,12 +3,10 @@ import { ENGINE_IDS, SIGNAL_PRIORITIES } from '../../constants';
 import { isSignal } from '../../types';
 import type { Signal, SignalType } from '../../types';
 
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
-type SpeechRecognitionType = any;
-
 export class MicrophoneEngine extends Engine {
   private stream: MediaStream | null = null;
-  private recognition: SpeechRecognitionType = null;
+  private ws: WebSocket | null = null;
+  private recorder: MediaRecorder | null = null;
   private enabled = false;
 
   constructor() {
@@ -24,61 +22,94 @@ export class MicrophoneEngine extends Engine {
       // Get microphone access
       this.stream = await navigator.mediaDevices.getUserMedia({ audio: true });
 
-      // Set up Web Speech API
-      const SpeechRecognition = window.SpeechRecognition || window.webkitSpeechRecognition;
-      if (!SpeechRecognition) {
-        this.debugInfo = 'Speech recognition not supported';
+      // Fetch temporary Deepgram key
+      const tokenRes = await fetch('/api/stt/token', { method: 'POST' });
+      if (!tokenRes.ok) {
+        this.debugInfo = 'Failed to get STT token';
         return false;
       }
+      const { key } = await tokenRes.json();
 
-      this.recognition = new SpeechRecognition();
-      this.recognition.continuous = true;
-      this.recognition.interimResults = true;
-      this.recognition.lang = 'en-US';
+      // Connect to Deepgram WebSocket
+      const params = new URLSearchParams({
+        model: 'nova-3',
+        language: 'no',
+        interim_results: 'true',
+        smart_format: 'true',
+        punctuate: 'true',
+        encoding: 'opus',
+        sample_rate: '48000',
+      });
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      this.recognition.onresult = (event: any) => {
-        const last = event.results[event.results.length - 1];
-        if (last.isFinal) {
-          const text = last[0].transcript.trim();
-          if (text) {
-            this.emit('speech-text', {
-              text,
-              confidence: last[0].confidence,
+      this.ws = new WebSocket(
+        `wss://api.deepgram.com/v1/listen?${params}`,
+        ['token', key],
+      );
+
+      this.ws.onopen = () => {
+        // Start MediaRecorder to feed audio chunks
+        this.recorder = new MediaRecorder(this.stream!, {
+          mimeType: 'audio/webm;codecs=opus',
+        });
+
+        this.recorder.ondataavailable = (e) => {
+          if (
+            e.data.size > 0 &&
+            this.ws &&
+            this.ws.readyState === WebSocket.OPEN
+          ) {
+            this.ws.send(e.data);
+          }
+        };
+
+        this.recorder.start(250);
+        this.debugInfo = 'Microphone active (Deepgram)';
+      };
+
+      this.ws.onmessage = (event) => {
+        try {
+          const data = JSON.parse(event.data);
+          const transcript = data.channel?.alternatives?.[0]?.transcript;
+          if (!transcript || !data.is_final) return;
+
+          this.emit(
+            'speech-text',
+            {
+              text: transcript,
+              confidence: data.channel?.alternatives?.[0]?.confidence ?? 1,
               timestamp: Date.now(),
-            }, {
+            },
+            {
               target: ENGINE_IDS.PERCEPTION,
               priority: SIGNAL_PRIORITIES.HIGH,
-            });
+            },
+          );
 
-            this.selfState.nudge('social', 0.05);
-            this.selfState.nudge('arousal', 0.03);
-            this.debugInfo = `Heard: "${text.slice(0, 30)}..."`;
-          }
+          this.selfState.nudge('social', 0.05);
+          this.selfState.nudge('arousal', 0.03);
+          this.debugInfo = `Heard: "${transcript.slice(0, 30)}..."`;
+        } catch {
+          // Ignore non-JSON messages
         }
       };
 
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      this.recognition.onerror = (event: any) => {
-        if (event.error !== 'no-speech') {
-          this.debugInfo = `Speech error: ${event.error}`;
+      this.ws.onerror = () => {
+        this.debugInfo = 'Deepgram WebSocket error';
+      };
+
+      this.ws.onclose = () => {
+        if (this.enabled) {
+          // Auto-reconnect after a delay
+          setTimeout(() => {
+            if (this.enabled) {
+              this.disable();
+              this.enable();
+            }
+          }, 2000);
         }
       };
 
-      this.recognition.onend = () => {
-        // Auto-restart if still enabled
-        if (this.enabled && this.recognition) {
-          try {
-            this.recognition.start();
-          } catch {
-            // Already started
-          }
-        }
-      };
-
-      this.recognition.start();
       this.enabled = true;
-      this.debugInfo = 'Microphone active';
       return true;
     } catch (err) {
       this.debugInfo = `Mic error: ${err}`;
@@ -89,14 +120,25 @@ export class MicrophoneEngine extends Engine {
 
   disable(): void {
     this.enabled = false;
-    if (this.recognition) {
-      this.recognition.stop();
-      this.recognition = null;
+
+    if (this.recorder && this.recorder.state !== 'inactive') {
+      this.recorder.stop();
     }
+    this.recorder = null;
+
+    if (this.ws) {
+      if (this.ws.readyState === WebSocket.OPEN) {
+        this.ws.send(JSON.stringify({ type: 'CloseStream' }));
+      }
+      this.ws.close();
+      this.ws = null;
+    }
+
     if (this.stream) {
-      this.stream.getTracks().forEach(t => t.stop());
+      this.stream.getTracks().forEach((t) => t.stop());
       this.stream = null;
     }
+
     this.debugInfo = 'Microphone disabled';
   }
 
@@ -120,15 +162,5 @@ export class MicrophoneEngine extends Engine {
   destroy(): void {
     this.disable();
     super.destroy();
-  }
-}
-
-// Augment Window type for webkit prefix
-declare global {
-  interface Window {
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    SpeechRecognition: any;
-    // eslint-disable-next-line @typescript-eslint/no-explicit-any
-    webkitSpeechRecognition: any;
   }
 }

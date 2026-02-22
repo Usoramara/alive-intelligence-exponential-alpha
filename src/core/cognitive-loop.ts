@@ -1,5 +1,5 @@
 import type { EngineId } from './constants';
-import { SIGNAL_PRIORITIES } from './constants';
+import { CRITICAL_PATH, SIGNAL_PRIORITIES } from './constants';
 import type { MindSnapshot, Signal, SignalType } from './types';
 import { SignalBus } from './signal-bus';
 import { SelfStateManager } from './state';
@@ -10,6 +10,7 @@ export class CognitiveLoop {
   readonly selfState: SelfStateManager;
 
   private engines = new Map<EngineId, Engine>();
+  private criticalPathSet = new Set<EngineId>(CRITICAL_PATH);
   private running = false;
   private rafId: number | null = null;
   private tickCount = 0;
@@ -64,13 +65,27 @@ export class CognitiveLoop {
     this.tickCount++;
     this.frameCounter++;
 
-    // 1. Tick all engines
-    for (const engine of this.engines.values()) {
-      engine.tick(now);
+    // 1. Critical path — tick each engine then flush so signals cascade immediately
+    let allProcessed: Signal[] = [];
+    for (const id of CRITICAL_PATH) {
+      const engine = this.engines.get(id);
+      if (engine) {
+        engine.tick(now);
+        const flushed = this.bus.flush();
+        if (flushed.length > 0) allProcessed.push(...flushed);
+      }
     }
 
-    // 2. Flush signal bus — deliver all pending signals
-    const processed = this.bus.flush();
+    // 2. Remaining engines — tick normally, single flush at end
+    for (const [id, engine] of this.engines) {
+      if (!this.criticalPathSet.has(id)) {
+        engine.tick(now);
+      }
+    }
+    const remaining = this.bus.flush();
+    if (remaining.length > 0) allProcessed.push(...remaining);
+
+    const processed = allProcessed;
     if (processed.length > 0) {
       this.lastActiveSignals = processed;
     }

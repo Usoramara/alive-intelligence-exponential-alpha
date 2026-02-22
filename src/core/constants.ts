@@ -50,6 +50,16 @@ export const ENGINE_IDS = {
 
 export type EngineId = (typeof ENGINE_IDS)[keyof typeof ENGINE_IDS];
 
+// Critical path — engine order for text-input → response pipeline.
+// The cognitive loop ticks these first (with flush after each) so signals cascade in one frame.
+export const CRITICAL_PATH: EngineId[] = [
+  ENGINE_IDS.TEXT_INPUT,
+  ENGINE_IDS.PERCEPTION,
+  ENGINE_IDS.ATTENTION,
+  ENGINE_IDS.BINDER,
+  ENGINE_IDS.ARBITER,
+];
+
 // Tick intervals in ms — how often each engine processes
 export const TICK_RATES: Record<EngineId, number> = {
   // Outer — fast sensors
@@ -57,7 +67,7 @@ export const TICK_RATES: Record<EngineId, number> = {
   [ENGINE_IDS.CAMERA]: 2000,         // 0.5fps to manage API cost
   [ENGINE_IDS.MICROPHONE]: 100,      // Audio chunks
   [ENGINE_IDS.SAFETY]: 16,           // Always watching
-  [ENGINE_IDS.PERCEPTION]: 200,      // Process sensor data
+  [ENGINE_IDS.PERCEPTION]: 50,       // Process sensor data (critical path — low latency)
   [ENGINE_IDS.MOTOR]: 100,           // Action planning
   [ENGINE_IDS.MEMORY]: 500,          // Retrieval
 
@@ -77,9 +87,9 @@ export const TICK_RATES: Record<EngineId, number> = {
   [ENGINE_IDS.LOVE_FIELD]: 1000,
 
   // Thalamus — moderate
-  [ENGINE_IDS.ATTENTION]: 50,        // Fast saliency
-  [ENGINE_IDS.BINDER]: 100,          // Cross-modal fusion
-  [ENGINE_IDS.ARBITER]: 100,         // Decision making
+  [ENGINE_IDS.ATTENTION]: 16,        // Fast saliency (critical path)
+  [ENGINE_IDS.BINDER]: 32,           // Cross-modal fusion (critical path)
+  [ENGINE_IDS.ARBITER]: 32,          // Decision making (critical path)
   [ENGINE_IDS.SYNC]: 50,             // Temporal alignment
   [ENGINE_IDS.MEMORY_WRITE]: 500,    // Significance scoring
   [ENGINE_IDS.GROWTH]: 30000,        // Self-improvement

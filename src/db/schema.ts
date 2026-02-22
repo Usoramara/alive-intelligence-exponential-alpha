@@ -7,6 +7,7 @@ import {
   jsonb,
   uuid,
   index,
+  uniqueIndex,
   vector,
 } from 'drizzle-orm/pg-core';
 
@@ -131,4 +132,22 @@ export const usageRecords = pgTable(
     createdAt: timestamp('created_at').defaultNow().notNull(),
   },
   (t) => [index('usage_user_idx').on(t.userId)],
+);
+
+// ── Channel Conversations (persistent channel history) ──
+
+export const channelConversations = pgTable(
+  'channel_conversations',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    userId: text('user_id').notNull(),
+    channelType: text('channel_type').notNull(), // 'telegram' | 'slack' | 'discord' | 'whatsapp' | ...
+    channelUserId: text('channel_user_id').notNull(),
+    messages: jsonb('messages').notNull(), // Array<{ role, content }>
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (t) => [
+    uniqueIndex('channel_conversations_user_channel_idx').on(t.userId, t.channelType, t.channelUserId),
+  ],
 );

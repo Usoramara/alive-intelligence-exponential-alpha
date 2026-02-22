@@ -22,15 +22,28 @@ async function verifyDiscordSignature(
   if (!signature || !timestamp) return false;
 
   try {
-    // Use tweetnacl or similar for Ed25519 verification
-    // For now, skip signature verification if no crypto library available
-    // In production, install tweetnacl and verify properly
+    // Convert hex strings to Uint8Array
+    const sigBytes = new Uint8Array(
+      signature.match(/.{1,2}/g)!.map((b) => parseInt(b, 16)),
+    );
+    const keyBytes = new Uint8Array(
+      DISCORD_PUBLIC_KEY.match(/.{1,2}/g)!.map((b) => parseInt(b, 16)),
+    );
+
+    // Import the Ed25519 public key
+    const cryptoKey = await crypto.subtle.importKey(
+      'raw',
+      keyBytes,
+      { name: 'Ed25519' },
+      false,
+      ['verify'],
+    );
+
+    // Verify: message = timestamp + body
     const encoder = new TextEncoder();
-    const _message = encoder.encode(timestamp + body);
-    // TODO: Proper Ed25519 verification with tweetnacl
-    // const nacl = require('tweetnacl');
-    // return nacl.sign.detached.verify(message, hexToUint8Array(signature), hexToUint8Array(DISCORD_PUBLIC_KEY));
-    return true; // Placeholder — add proper verification before production
+    const message = encoder.encode(timestamp + body);
+
+    return await crypto.subtle.verify('Ed25519', cryptoKey, sigBytes, message);
   } catch {
     return false;
   }
