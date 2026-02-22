@@ -85,6 +85,7 @@ if (hasClerkKeys) {
   const isPublicRoute = createRouteMatcher([
     '/',
     '/intelligence',
+    '/execution(.*)',
     '/thoughts',
     '/system',
     '/openclaw',

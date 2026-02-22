@@ -98,6 +98,9 @@ export default function SystemPage() {
           <Link href="/intelligence" className="text-xs font-mono text-white/25 hover:text-white/50 transition-colors">
             Intelligence →
           </Link>
+          <Link href="/execution/chat?session=main" className="text-xs font-mono text-white/25 hover:text-white/50 transition-colors">
+            Execution →
+          </Link>
           <Link href="/openclaw" className="text-xs font-mono text-white/25 hover:text-white/50 transition-colors">
             OpenClaw →
           </Link>

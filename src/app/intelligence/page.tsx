@@ -48,6 +48,9 @@ export default function IntelligencePage() {
             <Link href="/thoughts" className="text-xs font-mono text-white/25 hover:text-white/50 transition-colors">
               Thoughts &rarr;
             </Link>
+            <Link href="/execution/chat?session=main" className="text-xs font-mono text-white/25 hover:text-white/50 transition-colors">
+              Execution &rarr;
+            </Link>
           </div>
         </header>
 

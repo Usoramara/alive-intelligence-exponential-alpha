@@ -100,6 +100,12 @@ export default function AppLayout({
               Intelligence
             </Link>
             <Link
+              href="/execution/chat?session=main"
+              className="block px-3 py-2 text-xs font-mono text-white/30 hover:text-white/60 transition-colors"
+            >
+              Execution
+            </Link>
+            <Link
               href="/settings"
               className="block px-3 py-2 text-xs font-mono text-white/30 hover:text-white/60 transition-colors"
             >
