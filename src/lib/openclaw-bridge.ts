@@ -40,9 +40,35 @@ class OpenClawBridge {
   private listeners = new Map<string, Set<EventHandler>>();
   private handshakeId: string | null = null;
   private lastPingMs: number | null = null;
+  private connectWaiters: Array<{ resolve: () => void; reject: (err: Error) => void }> = [];
 
   constructor() {
     this.connect();
+  }
+
+  /**
+   * Wait for the bridge to be connected (or already connected).
+   * Returns immediately if already connected, otherwise waits up to timeoutMs.
+   */
+  waitForConnection(timeoutMs = 5_000): Promise<void> {
+    if (this.connected) return Promise.resolve();
+    if (this.destroyed) return Promise.reject(new OpenClawConnectionError('Bridge destroyed'));
+    return new Promise<void>((resolve, reject) => {
+      const timer = setTimeout(() => {
+        const idx = this.connectWaiters.findIndex((w) => w.resolve === resolve);
+        if (idx !== -1) this.connectWaiters.splice(idx, 1);
+        reject(new OpenClawConnectionError(`Connection timeout after ${timeoutMs}ms`));
+      }, timeoutMs);
+      this.connectWaiters.push({
+        resolve: () => { clearTimeout(timer); resolve(); },
+        reject: (err: Error) => { clearTimeout(timer); reject(err); },
+      });
+    });
+  }
+
+  private resolveConnectWaiters() {
+    const waiters = this.connectWaiters.splice(0);
+    for (const w of waiters) w.resolve();
   }
 
   private connect() {
@@ -125,6 +151,7 @@ class OpenClawBridge {
           if (this.lastPingMs) {
             this.lastPingMs = Date.now() - this.lastPingMs;
           }
+          this.resolveConnectWaiters();
           console.log('[OpenClawBridge] Connected');
         } else {
           console.error('[OpenClawBridge] Handshake rejected:', JSON.stringify(frame.error ?? frame));

@@ -4,6 +4,7 @@ import { getOpenClawBridge } from '@/lib/openclaw-bridge';
 
 export async function GET() {
   const bridge = getOpenClawBridge();
+  try { await bridge.waitForConnection(5_000); } catch { /* proceed with status check */ }
   const bridgeStatus = bridge.getStatus();
 
   const [health, channels, sessionsRaw] = await queryOpenClawGateway([

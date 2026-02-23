@@ -10,7 +10,7 @@ const DIMENSIONS: Array<{
   min: number;
 }> = [
   { key: 'valence', label: 'Valence', color: '#f59e0b', min: -1 },
-  { key: 'arousal', label: 'Arousal', color: '#ef4444', min: 0 },
+  { key: 'arousal', label: 'Alertness', color: '#ef4444', min: 0 },
   { key: 'confidence', label: 'Confidence', color: '#3b82f6', min: 0 },
   { key: 'energy', label: 'Energy', color: '#10b981', min: 0 },
   { key: 'social', label: 'Social', color: '#ec4899', min: 0 },

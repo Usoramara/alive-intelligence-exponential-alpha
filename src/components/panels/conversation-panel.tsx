@@ -5,6 +5,7 @@ import { MindContext, ConversationIdContext } from '@/components/mind-provider';
 import { ENGINE_IDS } from '@/core/constants';
 import { VoiceEngine } from '@/core/engines/body/voice-engine';
 import { isSignal } from '@/core/types';
+import type { CognitiveLoop } from '@/core/cognitive-loop';
 
 interface Message {
   role: 'user' | 'wybe' | 'tool';
@@ -14,6 +15,27 @@ interface Message {
   toolName?: string;
   toolStatus?: 'started' | 'completed' | 'error';
   streaming?: boolean;
+  feeling?: string;
+}
+
+/**
+ * Capture the latest inner feeling — only when it's recent and intense enough.
+ * This keeps feelings in moderation: they appear when the emotional moment
+ * calls for it, not on every single message.
+ */
+function captureFeeling(loop: CognitiveLoop): string | undefined {
+  const entry = loop.selfState.getLastStreamEntry();
+  if (!entry) return undefined;
+
+  // Only show if the feeling is recent (within last 15s) and intense enough
+  const age = Date.now() - entry.timestamp;
+  if (age > 15000) return undefined;
+  if (entry.intensity < 0.4) return undefined;
+
+  // Skip metacognitive entries — too "clinical" for the chat
+  if (entry.flavor === 'metacognitive') return undefined;
+
+  return entry.text;
 }
 
 const TOOL_LABELS: Record<string, string> = {
@@ -95,6 +117,9 @@ export function ConversationPanel() {
 
     // Listen to final voice output (completes the streaming message)
     const voiceUnsub = voiceEngine?.onOutput((text) => {
+      // Capture the current inner feeling (if recent and intense enough)
+      const feeling = captureFeeling(loop);
+
       setMessages(prev => {
         // If the last message is a streaming wybe message, finalize it
         if (
@@ -107,6 +132,7 @@ export function ConversationPanel() {
             ...updated[updated.length - 1],
             text,
             streaming: false,
+            feeling,
           };
           streamingRef.current = false;
           return updated;
@@ -117,6 +143,7 @@ export function ConversationPanel() {
           role: 'wybe',
           text,
           timestamp: Date.now(),
+          feeling,
         }];
       });
     });
@@ -227,6 +254,11 @@ export function ConversationPanel() {
                   {msg.role === 'user' ? 'You' : 'Wybe'}
                   {msg.channel === 'voice' && ' (voice)'}
                 </span>
+                {msg.role === 'wybe' && msg.feeling && (
+                  <span className="block italic text-white/30 text-xs mb-1.5">
+                    {msg.feeling}
+                  </span>
+                )}
                 {msg.text}
                 {msg.streaming && (
                   <span className="inline-block w-1.5 h-3.5 bg-purple-400/60 animate-pulse ml-0.5 align-text-bottom" />

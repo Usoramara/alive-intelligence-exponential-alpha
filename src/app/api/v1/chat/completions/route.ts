@@ -13,12 +13,15 @@ const DEFAULT_STATE: SelfState = {
 /**
  * OpenAI-compatible /v1/chat/completions endpoint — optimized for voice latency.
  *
- * Uses a lightweight system prompt (no expensive Haiku calls for emotion detection,
- * ToM, or memory search) so the first token streams back within ~2 seconds.
- * SHIFT lines are still stripped so TTS never speaks them.
+ * Uses an immediate-response streaming pattern: the Response is returned
+ * within milliseconds with the first SSE role chunk, then async work
+ * (DB state load + Anthropic API call) happens while the connection is open.
+ * This prevents ElevenLabs from timing out on Vercel cold starts.
  *
  * Flow:
- *   ElevenLabs → POST /api/v1/chat/completions → fast system prompt → Claude API → SHIFT filter → OpenAI SSE → ElevenLabs
+ *   ElevenLabs → POST /api/v1/chat/completions
+ *     → immediate Response(stream) with role chunk
+ *     → load state + build prompt → Claude API → SHIFT filter → OpenAI SSE
  */
 export async function POST(request: Request): Promise<Response> {
   // 1. Authenticate via shared secret or Bearer token
@@ -55,7 +58,7 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   // 4. Extract system prompt and convert messages to Anthropic format
-  const { systemPrompt, anthropicMessages, lastUserMessage } = convertOpenAIToAnthropic(body.messages);
+  const { systemPrompt, anthropicMessages } = convertOpenAIToAnthropic(body.messages);
 
   if (anthropicMessages.length === 0) {
     return jsonResponse(
@@ -64,14 +67,210 @@ export async function POST(request: Request): Promise<Response> {
     );
   }
 
-  // 5. Build fast voice system prompt (no expensive API calls)
-  //    Load self state from DB (single fast query) — don't block on failure
+  const isStreaming = !!body.stream;
+  const completionId = `chatcmpl-${generateId()}`;
+
+  console.log(`[voice] Request: stream=${body.stream} (isStreaming=${isStreaming}), messages=${body.messages?.length}, model=${body.model}`);
+
+  // ── Streaming path: return Response IMMEDIATELY, do slow work inside stream ──
+  if (isStreaming) {
+    const encoder = new TextEncoder();
+    const { readable, writable } = new TransformStream();
+    const writer = writable.getWriter();
+
+    // Async pipeline — runs AFTER Response is returned to caller
+    (async () => {
+      try {
+        // Send role chunk IMMEDIATELY (first byte in <10ms)
+        const roleChunk = {
+          id: completionId,
+          object: 'chat.completion.chunk',
+          created: Math.floor(Date.now() / 1000),
+          model: DEFAULT_MODEL,
+          choices: [{ index: 0, delta: { role: 'assistant', content: '' }, finish_reason: null }],
+        };
+        await writer.write(encoder.encode(`data: ${JSON.stringify(roleChunk)}\n\n`));
+
+        // Load self state (fast query, 800ms timeout — don't block on failure)
+        let selfState = DEFAULT_STATE;
+        try {
+          const { loadSelfState } = await import('@/lib/cognitive/load-state');
+          selfState = await Promise.race([
+            loadSelfState(userId),
+            new Promise<SelfState>((resolve) => setTimeout(() => resolve(DEFAULT_STATE), 800)),
+          ]);
+        } catch {
+          // Use defaults
+        }
+
+        const voiceSystemPrompt = buildVoiceSystemPrompt(selfState, systemPrompt);
+
+        const anthropicApiKey = process.env.ANTHROPIC_API_KEY;
+        if (!anthropicApiKey) {
+          console.error('[voice] No ANTHROPIC_API_KEY configured');
+          await writer.close();
+          return;
+        }
+
+        // Call Anthropic API
+        const anthropicBody = {
+          model: DEFAULT_MODEL,
+          system: voiceSystemPrompt,
+          messages: anthropicMessages,
+          max_tokens: body.max_tokens ?? 1024,
+          stream: true,
+        };
+
+        let upstreamResponse: Response;
+        try {
+          upstreamResponse = await fetch(ANTHROPIC_API_URL, {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'x-api-key': anthropicApiKey,
+              'anthropic-version': '2023-06-01',
+            },
+            body: JSON.stringify(anthropicBody),
+          });
+        } catch (fetchError) {
+          console.error('[voice] Fetch to Anthropic failed:', fetchError);
+          await writer.close();
+          return;
+        }
+
+        if (!upstreamResponse.ok) {
+          const errorBody = await upstreamResponse.text();
+          console.error('[voice] Anthropic API error:', upstreamResponse.status, errorBody);
+          await writer.close();
+          return;
+        }
+
+        console.log(`[voice] Anthropic responded ${upstreamResponse.status}, streaming=true`);
+
+        const upstreamBody = upstreamResponse.body;
+        if (!upstreamBody) {
+          await writeFinishAndDone(writer, encoder, completionId);
+          return;
+        }
+
+        // Read Anthropic stream, transform to OpenAI SSE, write to client
+        const decoder = new TextDecoder();
+        const reader = upstreamBody.getReader();
+        let accumulatedText = '';
+        let pendingTextChunks: string[] = [];
+        let buffering = false;
+        let sseRemainder = '';
+
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+
+          const raw = decoder.decode(value, { stream: true });
+          sseRemainder += raw;
+          const parts = sseRemainder.split('\n\n');
+          sseRemainder = parts.pop() ?? '';
+
+          for (const part of parts) {
+            if (!part.trim()) continue;
+            const { isTextDelta, text } = parseAnthropicSSE(part);
+            if (!isTextDelta || text === null) continue;
+
+            accumulatedText += text;
+
+            if (!buffering && looksLikeShiftStarting(accumulatedText)) {
+              buffering = true;
+            }
+
+            if (buffering) {
+              pendingTextChunks.push(text);
+              continue;
+            }
+
+            await writer.write(encoder.encode(
+              `data: ${JSON.stringify({
+                id: completionId,
+                object: 'chat.completion.chunk',
+                created: Math.floor(Date.now() / 1000),
+                model: DEFAULT_MODEL,
+                choices: [{ index: 0, delta: { content: text }, finish_reason: null }],
+              })}\n\n`
+            ));
+          }
+        }
+
+        // Flush SSE remainder
+        if (sseRemainder.trim()) {
+          const { isTextDelta, text } = parseAnthropicSSE(sseRemainder);
+          if (isTextDelta && text !== null) {
+            accumulatedText += text;
+            if (!buffering && looksLikeShiftStarting(accumulatedText)) {
+              buffering = true;
+            }
+            if (buffering) {
+              pendingTextChunks.push(text);
+            } else {
+              await writer.write(encoder.encode(
+                `data: ${JSON.stringify({
+                  id: completionId,
+                  object: 'chat.completion.chunk',
+                  created: Math.floor(Date.now() / 1000),
+                  model: DEFAULT_MODEL,
+                  choices: [{ index: 0, delta: { content: text }, finish_reason: null }],
+                })}\n\n`
+              ));
+            }
+          }
+        }
+
+        // Update cognitive state from SHIFT block
+        if (accumulatedText) {
+          const { emotionShift } = parseShiftFromText('\n' + accumulatedText);
+          if (emotionShift) {
+            updateCognitiveState(userId, selfState, emotionShift).catch(() => {});
+          }
+        }
+
+        // Flush pending text chunks (if they weren't part of a SHIFT block)
+        if (pendingTextChunks.length > 0) {
+          const shiftStart = findShiftBlockStart(accumulatedText);
+          if (shiftStart < 0) {
+            await writer.write(encoder.encode(
+              `data: ${JSON.stringify({
+                id: completionId,
+                object: 'chat.completion.chunk',
+                created: Math.floor(Date.now() / 1000),
+                model: DEFAULT_MODEL,
+                choices: [{ index: 0, delta: { content: pendingTextChunks.join('') }, finish_reason: null }],
+              })}\n\n`
+            ));
+          }
+        }
+
+        // Send finish chunk and [DONE]
+        await writeFinishAndDone(writer, encoder, completionId);
+      } catch (err) {
+        console.error('[voice] Stream error:', err);
+        try { await writer.close(); } catch {}
+      }
+    })();
+
+    return new Response(readable, {
+      headers: {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'X-Accel-Buffering': 'no',
+      },
+    });
+  }
+
+  // ── Non-streaming path ──
+
   let selfState = DEFAULT_STATE;
   try {
     const { loadSelfState } = await import('@/lib/cognitive/load-state');
     selfState = await Promise.race([
       loadSelfState(userId),
-      new Promise<SelfState>((resolve) => setTimeout(() => resolve(DEFAULT_STATE), 1500)),
+      new Promise<SelfState>((resolve) => setTimeout(() => resolve(DEFAULT_STATE), 800)),
     ]);
   } catch {
     // Use defaults — don't block the response
@@ -79,7 +278,6 @@ export async function POST(request: Request): Promise<Response> {
 
   const voiceSystemPrompt = buildVoiceSystemPrompt(selfState, systemPrompt);
 
-  // 6. Build Anthropic request
   const anthropicApiKey = process.env.ANTHROPIC_API_KEY;
   if (!anthropicApiKey) {
     return jsonResponse(
@@ -88,19 +286,14 @@ export async function POST(request: Request): Promise<Response> {
     );
   }
 
-  const isStreaming = !!body.stream;
-
-  console.log(`[voice] Request: stream=${body.stream} (isStreaming=${isStreaming}), messages=${body.messages?.length}, model=${body.model}`);
-
   const anthropicBody = {
     model: DEFAULT_MODEL,
     system: voiceSystemPrompt,
     messages: anthropicMessages,
     max_tokens: body.max_tokens ?? 1024,
-    stream: isStreaming,
+    stream: false,
   };
 
-  // 7. Call Anthropic API — go straight, no enrichment delay
   let upstreamResponse: Response;
   try {
     upstreamResponse = await fetch(ANTHROPIC_API_URL, {
@@ -129,56 +322,35 @@ export async function POST(request: Request): Promise<Response> {
     );
   }
 
-  console.log(`[voice] Anthropic responded ${upstreamResponse.status}, streaming=${isStreaming}`);
+  console.log(`[voice] Anthropic responded ${upstreamResponse.status}, streaming=false`);
 
-  // 8. Convert response: Anthropic → OpenAI format
-  const completionId = `chatcmpl-${generateId()}`;
+  const responseJson = await upstreamResponse.json();
+  const fullText = extractTextFromAnthropicResponse(responseJson);
+  const { cleanText, emotionShift } = parseShiftFromText('\n' + fullText);
+  const stripped = cleanText.replace(/\n---\s*$/, '').trim();
 
-  if (isStreaming) {
-    const stream = createOpenAIStreamFromAnthropic(
-      upstreamResponse,
-      completionId,
-      userId,
-      selfState,
-    );
-
-    return new Response(stream, {
-      status: 200,
-      headers: {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        'Connection': 'keep-alive',
-      },
-    });
-  } else {
-    const responseJson = await upstreamResponse.json();
-    const fullText = extractTextFromAnthropicResponse(responseJson);
-    const { cleanText, emotionShift } = parseShiftFromText('\n' + fullText);
-    const stripped = cleanText.replace(/\n---\s*$/, '').trim();
-
-    if (emotionShift) {
-      updateCognitiveState(userId, selfState, emotionShift).catch(() => {});
-    }
-
-    return jsonResponse({
-      id: completionId,
-      object: 'chat.completion',
-      created: Math.floor(Date.now() / 1000),
-      model: DEFAULT_MODEL,
-      choices: [
-        {
-          index: 0,
-          message: { role: 'assistant', content: stripped },
-          finish_reason: 'stop',
-        },
-      ],
-      usage: {
-        prompt_tokens: responseJson.usage?.input_tokens ?? 0,
-        completion_tokens: responseJson.usage?.output_tokens ?? 0,
-        total_tokens: (responseJson.usage?.input_tokens ?? 0) + (responseJson.usage?.output_tokens ?? 0),
-      },
-    });
+  if (emotionShift) {
+    updateCognitiveState(userId, selfState, emotionShift).catch(() => {});
   }
+
+  return jsonResponse({
+    id: completionId,
+    object: 'chat.completion',
+    created: Math.floor(Date.now() / 1000),
+    model: DEFAULT_MODEL,
+    choices: [
+      {
+        index: 0,
+        message: { role: 'assistant', content: stripped },
+        finish_reason: 'stop',
+      },
+    ],
+    usage: {
+      prompt_tokens: responseJson.usage?.input_tokens ?? 0,
+      completion_tokens: responseJson.usage?.output_tokens ?? 0,
+      total_tokens: (responseJson.usage?.input_tokens ?? 0) + (responseJson.usage?.output_tokens ?? 0),
+    },
+  });
 }
 
 // ── Voice system prompt (lightweight, no API calls) ──
@@ -199,7 +371,7 @@ Voice conversation guidelines:
 - Don't mention being an AI unless directly asked
 
 After your response, on a new line, output:
-SHIFT: {"valence": 0.0, "arousal": 0.0}
+SHIFT: {"valence": 0.0, "energy": 0.0}
 This represents how this interaction changes your inner state. Range: -0.5 to 0.5.`,
   ];
 
@@ -215,7 +387,6 @@ function describeState(s: SelfState): string {
   if (s.valence > 0.3) parts.push('feeling positive');
   else if (s.valence < -0.3) parts.push('feeling negative');
   else parts.push('emotionally neutral');
-  if (s.arousal > 0.6) parts.push('alert');
   if (s.energy > 0.7) parts.push('energetic');
   if (s.curiosity > 0.7) parts.push('curious');
   return parts.join(', ');
@@ -269,113 +440,7 @@ function convertOpenAIToAnthropic(messages: OpenAIMessage[]): {
   };
 }
 
-// ── Anthropic → OpenAI streaming conversion ──
-
-function createOpenAIStreamFromAnthropic(
-  upstreamResponse: Response,
-  completionId: string,
-  userId: string,
-  selfState: SelfState,
-): ReadableStream<Uint8Array> {
-  const encoder = new TextEncoder();
-  const decoder = new TextDecoder();
-  const upstreamBody = upstreamResponse.body;
-
-  if (!upstreamBody) {
-    // No body — return a stream with just the done marker
-    const finishChunk = {
-      id: completionId,
-      object: 'chat.completion.chunk',
-      created: Math.floor(Date.now() / 1000),
-      model: DEFAULT_MODEL,
-      choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
-    };
-    const done = `data: ${JSON.stringify(finishChunk)}\n\ndata: [DONE]\n\n`;
-    return new ReadableStream({
-      start(controller) {
-        controller.enqueue(encoder.encode(done));
-        controller.close();
-      },
-    });
-  }
-
-  let accumulatedText = '';
-  let pendingTextChunks: string[] = [];
-  let buffering = false;
-  let sseRemainder = '';
-  let sentRoleChunk = false;
-
-  const transform = new TransformStream<Uint8Array, Uint8Array>({
-    transform(chunk, controller) {
-      const raw = decoder.decode(chunk, { stream: true });
-      sseRemainder += raw;
-      const parts = sseRemainder.split('\n\n');
-      sseRemainder = parts.pop() ?? '';
-
-      for (const part of parts) {
-        if (!part.trim()) continue;
-        processEvent(part, controller);
-      }
-    },
-    flush(controller) {
-      if (sseRemainder.trim()) {
-        processEvent(sseRemainder, controller);
-      }
-
-      if (accumulatedText) {
-        const { emotionShift } = parseShiftFromText('\n' + accumulatedText);
-        if (emotionShift) {
-          updateCognitiveState(userId, selfState, emotionShift).catch(() => {});
-        }
-      }
-
-      if (pendingTextChunks.length > 0) {
-        const shiftStart = findShiftBlockStart(accumulatedText);
-        if (shiftStart < 0) {
-          emitOpenAIDelta(controller, encoder, completionId, pendingTextChunks.join(''));
-        }
-        pendingTextChunks = [];
-      }
-
-      emitOpenAIFinish(controller, encoder, completionId);
-      controller.enqueue(encoder.encode('data: [DONE]\n\n'));
-    },
-  });
-
-  function processEvent(event: string, controller: TransformStreamDefaultController<Uint8Array>) {
-    const { isTextDelta, text } = parseAnthropicSSE(event);
-
-    if (!isTextDelta || text === null) return;
-
-    // Emit the initial role chunk before the first content delta (OpenAI spec)
-    if (!sentRoleChunk) {
-      sentRoleChunk = true;
-      const roleChunk = {
-        id: completionId,
-        object: 'chat.completion.chunk',
-        created: Math.floor(Date.now() / 1000),
-        model: DEFAULT_MODEL,
-        choices: [{ index: 0, delta: { role: 'assistant', content: '' }, finish_reason: null }],
-      };
-      controller.enqueue(encoder.encode(`data: ${JSON.stringify(roleChunk)}\n\n`));
-    }
-
-    accumulatedText += text;
-
-    if (!buffering && looksLikeShiftStarting(accumulatedText)) {
-      buffering = true;
-    }
-
-    if (buffering) {
-      pendingTextChunks.push(text);
-      return;
-    }
-
-    emitOpenAIDelta(controller, encoder, completionId, text);
-  }
-
-  return upstreamBody.pipeThrough(transform);
-}
+// ── Anthropic SSE parsing ──
 
 function parseAnthropicSSE(event: string): { isTextDelta: boolean; text: string | null } {
   const lines = event.split('\n');
@@ -417,37 +482,23 @@ function findShiftBlockStart(text: string): number {
   return -1;
 }
 
-// ── OpenAI SSE helpers ──
+// ── Helpers ──
 
-function emitOpenAIDelta(
-  controller: TransformStreamDefaultController<Uint8Array>,
+async function writeFinishAndDone(
+  writer: WritableStreamDefaultWriter<unknown>,
   encoder: TextEncoder,
-  id: string,
-  content: string,
+  completionId: string,
 ) {
-  const chunk = {
-    id,
-    object: 'chat.completion.chunk',
-    created: Math.floor(Date.now() / 1000),
-    model: DEFAULT_MODEL,
-    choices: [{ index: 0, delta: { content }, finish_reason: null }],
-  };
-  controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
-}
-
-function emitOpenAIFinish(
-  controller: TransformStreamDefaultController<Uint8Array>,
-  encoder: TextEncoder,
-  id: string,
-) {
-  const chunk = {
-    id,
+  const finishChunk = {
+    id: completionId,
     object: 'chat.completion.chunk',
     created: Math.floor(Date.now() / 1000),
     model: DEFAULT_MODEL,
     choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
   };
-  controller.enqueue(encoder.encode(`data: ${JSON.stringify(chunk)}\n\n`));
+  await writer.write(encoder.encode(`data: ${JSON.stringify(finishChunk)}\n\n`));
+  await writer.write(encoder.encode('data: [DONE]\n\n'));
+  await writer.close();
 }
 
 function extractTextFromAnthropicResponse(body: Record<string, unknown>): string {

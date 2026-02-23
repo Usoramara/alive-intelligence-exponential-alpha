@@ -17,6 +17,7 @@ export async function queryOpenClawGateway(
   timeoutMs = 8_000,
 ): Promise<RpcResult[]> {
   const bridge = getOpenClawBridge();
+  try { await bridge.waitForConnection(5_000); } catch { /* proceed anyway */ }
   return Promise.all(
     methods.map((m) => toResult(() => bridge.call(m, undefined, timeoutMs))),
   );
@@ -31,5 +32,6 @@ export async function callOpenClaw<T = unknown>(
   timeoutMs = 8_000,
 ): Promise<RpcResult<T>> {
   const bridge = getOpenClawBridge();
+  try { await bridge.waitForConnection(5_000); } catch { /* proceed anyway */ }
   return toResult(() => bridge.call(method, params, timeoutMs) as Promise<T>);
 }

@@ -10,7 +10,7 @@ const DIMENSIONS: Array<{
   color: string;
 }> = [
   { key: 'valence', label: 'VAL', color: '#3b82f6' },
-  { key: 'arousal', label: 'ARO', color: '#ef4444' },
+  { key: 'arousal', label: 'ALR', color: '#ef4444' },
   { key: 'confidence', label: 'CON', color: '#f59e0b' },
   { key: 'energy', label: 'NRG', color: '#10b981' },
   { key: 'social', label: 'SOC', color: '#a855f7' },
