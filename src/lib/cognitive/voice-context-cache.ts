@@ -1,6 +1,9 @@
 import { enrichWithCognition } from '@/lib/cognitive-middleware';
 import { getRecentMemories } from '@/lib/memory/manager';
 import { callOpenClaw } from '@/lib/openclaw-rpc';
+import { getDb } from '@/db';
+import { agentFiles } from '@/db/schema';
+import { eq } from 'drizzle-orm';
 import type { SelfState } from '@/core/types';
 
 /**
@@ -68,10 +71,9 @@ export function getOpenClawFiles(agentId = 'main'): OpenClawFilesEntry | null {
 }
 
 /**
- * Refresh OpenClaw workspace files (SOUL.md, IDENTITY.md, USER.md).
- * Fetches all three in parallel via RPC. Returns null if all fail.
+ * Try fetching OpenClaw files via RPC (works locally / when gateway is reachable).
  */
-export async function refreshOpenClawFiles(agentId = 'main'): Promise<OpenClawFilesEntry | null> {
+async function tryRpcFetch(agentId: string): Promise<OpenClawFilesEntry | null> {
   const [soulResult, identityResult, userResult] = await Promise.all([
     callOpenClaw<{ content: string }>('agents.files.get', { agentId, name: 'SOUL.md' }),
     callOpenClaw<{ content: string }>('agents.files.get', { agentId, name: 'IDENTITY.md' }),
@@ -82,19 +84,104 @@ export async function refreshOpenClawFiles(agentId = 'main'): Promise<OpenClawFi
   const identity = identityResult.ok ? (identityResult.data as { content: string }).content : '';
   const user = userResult.ok ? (userResult.data as { content: string }).content : '';
 
-  // If all three failed, don't cache anything
-  if (!soul && !identity && !user) {
-    console.warn('[voice] OpenClaw file fetch: all three files unavailable');
-    return null;
+  if (!soul && !identity && !user) return null;
+
+  return { soul, identity, user, updatedAt: Date.now() };
+}
+
+/**
+ * Upsert SOUL.md, IDENTITY.md, USER.md rows into agent_files table.
+ */
+export async function upsertAgentFiles(agentId: string, files: OpenClawFilesEntry): Promise<void> {
+  const db = getDb();
+  const pairs: { name: string; content: string }[] = [
+    { name: 'SOUL.md', content: files.soul },
+    { name: 'IDENTITY.md', content: files.identity },
+    { name: 'USER.md', content: files.user },
+  ];
+
+  await Promise.all(
+    pairs
+      .filter((p) => p.content) // only upsert non-empty files
+      .map((p) =>
+        db
+          .insert(agentFiles)
+          .values({ agentId, fileName: p.name, content: p.content })
+          .onConflictDoUpdate({
+            target: [agentFiles.agentId, agentFiles.fileName],
+            set: { content: p.content, updatedAt: new Date() },
+          }),
+      ),
+  );
+}
+
+/**
+ * Read agent files from DB. Returns null if no rows found.
+ */
+export async function getAgentFilesFromDB(agentId: string): Promise<OpenClawFilesEntry | null> {
+  const db = getDb();
+  const rows = await db
+    .select({ fileName: agentFiles.fileName, content: agentFiles.content, updatedAt: agentFiles.updatedAt })
+    .from(agentFiles)
+    .where(eq(agentFiles.agentId, agentId));
+
+  if (rows.length === 0) return null;
+
+  let soul = '';
+  let identity = '';
+  let user = '';
+  let latestUpdate = 0;
+
+  for (const row of rows) {
+    const ts = row.updatedAt.getTime();
+    if (ts > latestUpdate) latestUpdate = ts;
+    if (row.fileName === 'SOUL.md') soul = row.content;
+    else if (row.fileName === 'IDENTITY.md') identity = row.content;
+    else if (row.fileName === 'USER.md') user = row.content;
   }
 
-  const entry: OpenClawFilesEntry = { soul, identity, user, updatedAt: Date.now() };
-  openclawCache.set(agentId, entry);
+  return { soul, identity, user, updatedAt: latestUpdate };
+}
 
-  const fetched = [soul && 'SOUL.md', identity && 'IDENTITY.md', user && 'USER.md'].filter(Boolean);
-  console.log(`[voice] OpenClaw files cached: ${fetched.join(', ')}`);
+/**
+ * Refresh OpenClaw workspace files (SOUL.md, IDENTITY.md, USER.md).
+ *
+ * Fallback chain:
+ *   1. Try RPC fetch (works locally / when gateway reachable)
+ *   2. On RPC success → upsert to DB (sync for next serverless invocation)
+ *   3. On RPC failure → read from DB (always works on Vercel)
+ *   4. If both fail → return null (graceful degradation)
+ */
+export async function refreshOpenClawFiles(agentId = 'main'): Promise<OpenClawFilesEntry | null> {
+  // 1. Try RPC
+  const rpcResult = await tryRpcFetch(agentId);
+  if (rpcResult) {
+    // Sync to DB (fire-and-forget)
+    upsertAgentFiles(agentId, rpcResult).catch((err) =>
+      console.warn('[voice] Failed to sync OpenClaw files to DB:', err),
+    );
+    openclawCache.set(agentId, rpcResult);
 
-  return entry;
+    const fetched = [rpcResult.soul && 'SOUL.md', rpcResult.identity && 'IDENTITY.md', rpcResult.user && 'USER.md'].filter(Boolean);
+    console.log(`[voice] OpenClaw files cached via RPC: ${fetched.join(', ')}`);
+    return rpcResult;
+  }
+
+  // 2. RPC failed — read from DB
+  try {
+    const dbResult = await getAgentFilesFromDB(agentId);
+    if (dbResult) {
+      openclawCache.set(agentId, dbResult);
+      console.log('[voice] OpenClaw files loaded from DB fallback');
+      return dbResult;
+    }
+  } catch (err) {
+    console.warn('[voice] DB fallback read failed:', err);
+  }
+
+  // 3. Both failed
+  console.warn('[voice] OpenClaw files unavailable (RPC + DB both failed)');
+  return null;
 }
 
 /**

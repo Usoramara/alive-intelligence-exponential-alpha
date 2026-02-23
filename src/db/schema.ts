@@ -134,6 +134,20 @@ export const usageRecords = pgTable(
   (t) => [index('usage_user_idx').on(t.userId)],
 );
 
+// ── Agent Files (OpenClaw SOUL.md / IDENTITY.md / USER.md persisted for serverless) ──
+
+export const agentFiles = pgTable(
+  'agent_files',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    agentId: text('agent_id').notNull(),
+    fileName: text('file_name').notNull(),
+    content: text('content').notNull(),
+    updatedAt: timestamp('updated_at').defaultNow().notNull(),
+  },
+  (t) => [uniqueIndex('agent_files_agent_file_idx').on(t.agentId, t.fileName)],
+);
+
 // ── Channel Conversations (persistent channel history) ──
 
 export const channelConversations = pgTable(
