@@ -10,6 +10,7 @@ interface Message {
   role: 'user' | 'wybe' | 'tool';
   text: string;
   timestamp: number;
+  channel?: 'voice' | 'text';
   toolName?: string;
   toolStatus?: 'started' | 'completed' | 'error';
   streaming?: boolean;
@@ -34,10 +35,11 @@ export function ConversationPanel() {
     fetch(`/api/user/messages?conversationId=${conversationId}`)
       .then(r => r.ok ? r.json() : { messages: [] })
       .then(data => {
-        const history: Message[] = (data.messages ?? []).map((m: { role: string; content: string; createdAt: string }) => ({
+        const history: Message[] = (data.messages ?? []).map((m: { role: string; content: string; createdAt: string; metadata?: { channel?: string } }) => ({
           role: m.role === 'user' ? 'user' as const : 'wybe' as const,
           text: m.content,
           timestamp: new Date(m.createdAt).getTime(),
+          channel: m.metadata?.channel === 'voice' ? 'voice' as const : undefined,
         }));
         setMessages(history);
       })
@@ -223,6 +225,7 @@ export function ConversationPanel() {
               >
                 <span className="text-[10px] opacity-40 block mb-1">
                   {msg.role === 'user' ? 'You' : 'Wybe'}
+                  {msg.channel === 'voice' && ' (voice)'}
                 </span>
                 {msg.text}
                 {msg.streaming && (
