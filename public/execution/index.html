@@ -8,6 +8,42 @@
     <link rel="icon" type="image/svg+xml" href="/execution/favicon.svg" />
     <link rel="icon" type="image/png" sizes="32x32" href="/execution/favicon-32.png" />
     <link rel="apple-touch-icon" sizes="180x180" href="/execution/apple-touch-icon.png" />
+    <script>
+      // Seed OpenClaw gateway config from server env before the app loads.
+      // Only runs if localStorage is missing or still has the wrong URL.
+      (function () {
+        var SETTINGS_KEY = 'openclaw.control.settings.v1';
+        var raw = localStorage.getItem(SETTINGS_KEY);
+        var settings = null;
+        try { settings = raw ? JSON.parse(raw) : null; } catch (e) { /* ignore */ }
+
+        // Skip if user already has a valid, non-default gatewayUrl configured
+        if (settings && settings.gatewayUrl
+            && settings.gatewayUrl.indexOf(location.host) === -1
+            && settings.gatewayUrl !== 'ws://127.0.0.1:18789') {
+          return;
+        }
+
+        // Synchronous XHR so settings are in localStorage before the module runs
+        try {
+          var xhr = new XMLHttpRequest();
+          xhr.open('GET', '/api/openclaw/config/client', false);
+          xhr.send();
+          if (xhr.status === 200) {
+            var cfg = JSON.parse(xhr.responseText);
+            if (cfg.gatewayUrl) {
+              var merged = Object.assign({}, settings || {}, {
+                gatewayUrl: cfg.gatewayUrl,
+                token: cfg.token || (settings && settings.token) || ''
+              });
+              localStorage.setItem(SETTINGS_KEY, JSON.stringify(merged));
+            }
+          }
+        } catch (e) {
+          // Config endpoint unavailable — app falls back to its own defaults
+        }
+      })();
+    </script>
     <script type="module" crossorigin src="/execution/assets/index-CQGHxOYN.js"></script>
     <link rel="stylesheet" crossorigin href="/execution/assets/index-DaIz6a6W.css">
   </head>
