@@ -1,5 +1,6 @@
 import { enrichWithCognition } from '@/lib/cognitive-middleware';
 import { getRecentMemories } from '@/lib/memory/manager';
+import { callOpenClaw } from '@/lib/openclaw-rpc';
 import type { SelfState } from '@/core/types';
 
 /**
@@ -21,15 +22,29 @@ interface VoiceContextEntry {
   enrichedSystemPrompt: string;
   selfState: SelfState;
   recentMemorySummary: string;
+  openclawFiles: OpenClawFilesEntry | null;
   updatedAt: number;
   lastUserMessage: string;
+}
+
+export interface OpenClawFilesEntry {
+  soul: string;      // SOUL.md content
+  identity: string;  // IDENTITY.md content
+  user: string;      // USER.md content
+  updatedAt: number;
 }
 
 // In-memory cache keyed by userId
 const cache = new Map<string, VoiceContextEntry>();
 
+// Separate cache for OpenClaw files — longer TTL since they rarely change
+const openclawCache = new Map<string, OpenClawFilesEntry>();
+
 // Cache TTL: 5 minutes — after this, context is considered stale
 const CACHE_TTL_MS = 5 * 60 * 1000;
+
+// OpenClaw files TTL: 30 minutes — these are relatively static
+const OPENCLAW_TTL_MS = 30 * 60 * 1000;
 
 /**
  * Get cached voice context. Returns null if cache is empty/stale.
@@ -38,6 +53,47 @@ export function getCachedVoiceContext(userId: string): VoiceContextEntry | null 
   const entry = cache.get(userId);
   if (!entry) return null;
   if (Date.now() - entry.updatedAt > CACHE_TTL_MS) return null;
+  return entry;
+}
+
+/**
+ * Get cached OpenClaw files. Returns null if cache is empty/stale.
+ * Separate from main voice cache so it survives cognitive cache misses.
+ */
+export function getOpenClawFiles(agentId = 'main'): OpenClawFilesEntry | null {
+  const entry = openclawCache.get(agentId);
+  if (!entry) return null;
+  if (Date.now() - entry.updatedAt > OPENCLAW_TTL_MS) return null;
+  return entry;
+}
+
+/**
+ * Refresh OpenClaw workspace files (SOUL.md, IDENTITY.md, USER.md).
+ * Fetches all three in parallel via RPC. Returns null if all fail.
+ */
+export async function refreshOpenClawFiles(agentId = 'main'): Promise<OpenClawFilesEntry | null> {
+  const [soulResult, identityResult, userResult] = await Promise.all([
+    callOpenClaw<{ content: string }>('agents.files.get', { agentId, name: 'SOUL.md' }),
+    callOpenClaw<{ content: string }>('agents.files.get', { agentId, name: 'IDENTITY.md' }),
+    callOpenClaw<{ content: string }>('agents.files.get', { agentId, name: 'USER.md' }),
+  ]);
+
+  const soul = soulResult.ok ? (soulResult.data as { content: string }).content : '';
+  const identity = identityResult.ok ? (identityResult.data as { content: string }).content : '';
+  const user = userResult.ok ? (userResult.data as { content: string }).content : '';
+
+  // If all three failed, don't cache anything
+  if (!soul && !identity && !user) {
+    console.warn('[voice] OpenClaw file fetch: all three files unavailable');
+    return null;
+  }
+
+  const entry: OpenClawFilesEntry = { soul, identity, user, updatedAt: Date.now() };
+  openclawCache.set(agentId, entry);
+
+  const fetched = [soul && 'SOUL.md', identity && 'IDENTITY.md', user && 'USER.md'].filter(Boolean);
+  console.log(`[voice] OpenClaw files cached: ${fetched.join(', ')}`);
+
   return entry;
 }
 
@@ -71,11 +127,17 @@ export async function refreshVoiceContext(
     }
   }
 
-  const { enrichedSystemPrompt, selfState } = await enrichWithCognition({
-    userId,
-    userMessage: contextMessage,
-    // No external system prompt — voice builds its own wrapper
-  });
+  // Run cognitive enrichment and OpenClaw file fetch in parallel
+  const [cognitionResult, openclawFiles] = await Promise.all([
+    enrichWithCognition({
+      userId,
+      userMessage: contextMessage,
+      // No external system prompt — voice builds its own wrapper
+    }),
+    refreshOpenClawFiles().catch(() => null),
+  ]);
+
+  const { enrichedSystemPrompt, selfState } = cognitionResult;
 
   // Also fetch recent memory summary for voice-specific context
   let recentMemorySummary = '';
@@ -92,6 +154,7 @@ export async function refreshVoiceContext(
     enrichedSystemPrompt,
     selfState,
     recentMemorySummary,
+    openclawFiles,
     updatedAt: Date.now(),
     lastUserMessage: contextMessage,
   };
@@ -108,7 +171,19 @@ export function buildEnrichedVoicePrompt(
   cachedContext: VoiceContextEntry,
   externalPrompt?: string,
 ): string {
-  const { enrichedSystemPrompt, recentMemorySummary } = cachedContext;
+  const { enrichedSystemPrompt, recentMemorySummary, openclawFiles } = cachedContext;
+
+  // Build OpenClaw identity block (if available)
+  let openclawContext = '';
+  if (openclawFiles) {
+    const sections: string[] = [];
+    if (openclawFiles.soul) sections.push(openclawFiles.soul);
+    if (openclawFiles.identity) sections.push(openclawFiles.identity);
+    if (openclawFiles.user) sections.push(openclawFiles.user);
+    if (sections.length > 0) {
+      openclawContext = `--- CORE IDENTITY ---\n${sections.join('\n\n')}\n--- END CORE IDENTITY ---\n\n`;
+    }
+  }
 
   // The enrichedSystemPrompt already contains:
   // - Identity foundation
@@ -120,8 +195,8 @@ export function buildEnrichedVoicePrompt(
   // - Empathic mirroring guidelines
   // - SHIFT protocol
 
-  // We wrap it with voice-specific guidelines
-  const voiceWrapper = `${enrichedSystemPrompt}
+  // We wrap it with OpenClaw identity + voice-specific guidelines
+  const voiceWrapper = `${openclawContext}${enrichedSystemPrompt}
 
 --- VOICE CONVERSATION MODE ---
 You are in a real-time voice conversation. Adapt your responses:

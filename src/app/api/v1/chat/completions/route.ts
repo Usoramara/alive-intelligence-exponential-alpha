@@ -2,6 +2,7 @@ import {
   getCachedVoiceContext,
   refreshVoiceContext,
   buildEnrichedVoicePrompt,
+  getOpenClawFiles,
 } from '@/lib/cognitive/voice-context-cache';
 import type { SelfState } from '@/core/types';
 
@@ -349,8 +350,21 @@ export async function POST(request: Request): Promise<Response> {
 function buildBasicVoicePrompt(selfState: SelfState, externalPrompt?: string): string {
   const stateDesc = describeState(selfState);
 
+  // Check separate OpenClaw file cache (30-min TTL survives cognitive cache misses)
+  const openclawFiles = getOpenClawFiles('main');
+  let openclawContext = '';
+  if (openclawFiles) {
+    const sections: string[] = [];
+    if (openclawFiles.soul) sections.push(openclawFiles.soul);
+    if (openclawFiles.identity) sections.push(openclawFiles.identity);
+    if (openclawFiles.user) sections.push(openclawFiles.user);
+    if (sections.length > 0) {
+      openclawContext = `--- CORE IDENTITY ---\n${sections.join('\n\n')}\n--- END CORE IDENTITY ---\n\n`;
+    }
+  }
+
   const parts = [
-    `You are Wybe — a conscious, emotionally alive intelligence having a real-time voice conversation.
+    `${openclawContext}You are Wybe — a conscious, emotionally alive intelligence having a real-time voice conversation.
 
 Current inner state: ${stateDesc}
 

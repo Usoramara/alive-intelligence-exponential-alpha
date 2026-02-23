@@ -5,7 +5,7 @@
 
 import { NextResponse } from 'next/server';
 import { processDueJobs } from '@/lib/tools/schedule';
-import { refreshVoiceContext } from '@/lib/cognitive/voice-context-cache';
+import { refreshVoiceContext, refreshOpenClawFiles } from '@/lib/cognitive/voice-context-cache';
 
 // Protect with a cron secret to prevent unauthorized access
 const CRON_SECRET = process.env.CRON_SECRET;
@@ -19,7 +19,7 @@ export async function GET(request: Request): Promise<NextResponse> {
     }
   }
 
-  const results: { jobs: number; voiceCache: boolean } = { jobs: 0, voiceCache: false };
+  const results: { jobs: number; voiceCache: boolean; openclawFiles: boolean } = { jobs: 0, voiceCache: false, openclawFiles: false };
 
   // 1. Process scheduled jobs
   try {
@@ -34,17 +34,29 @@ export async function GET(request: Request): Promise<NextResponse> {
     console.error('[cron] Error processing jobs:', error);
   }
 
-  // 2. Refresh voice context cache for the gateway user
-  // This runs enrichWithCognition (emotion detection, ToM, memory search) in the
-  // background so the next voice request reads from cache instead of waiting.
+  // 2. Refresh voice context cache and OpenClaw files for the gateway user
+  // Voice context: enrichWithCognition (emotion detection, ToM, memory search)
+  // OpenClaw files: SOUL.md, IDENTITY.md, USER.md (personality/identity/user context)
+  // Both run in parallel so they're warm before the next voice call.
   const gatewayUserId = process.env.WYBE_GATEWAY_USER_ID;
   if (gatewayUserId) {
-    try {
-      await refreshVoiceContext(gatewayUserId);
+    const [voiceResult, openclawResult] = await Promise.allSettled([
+      refreshVoiceContext(gatewayUserId),
+      refreshOpenClawFiles(),
+    ]);
+
+    if (voiceResult.status === 'fulfilled') {
       results.voiceCache = true;
       console.log('[cron] Voice context cache refreshed');
-    } catch (error) {
-      console.error('[cron] Voice context refresh failed:', error);
+    } else {
+      console.error('[cron] Voice context refresh failed:', voiceResult.reason);
+    }
+
+    if (openclawResult.status === 'fulfilled' && openclawResult.value !== null) {
+      results.openclawFiles = true;
+      console.log('[cron] OpenClaw files refreshed');
+    } else if (openclawResult.status === 'rejected') {
+      console.error('[cron] OpenClaw files refresh failed:', openclawResult.reason);
     }
   }
 
