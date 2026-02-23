@@ -1,5 +1,11 @@
 import { updateCognitiveState } from '@/lib/cognitive/state-updater';
 import { parseShiftFromText } from '@/lib/cognitive/state-updater';
+import {
+  getCachedVoiceContext,
+  refreshVoiceContext,
+  buildEnrichedVoicePrompt,
+} from '@/lib/cognitive/voice-context-cache';
+import { enrichWithCognition } from '@/lib/cognitive-middleware';
 import type { SelfState } from '@/core/types';
 
 const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';
@@ -11,17 +17,26 @@ const DEFAULT_STATE: SelfState = {
 };
 
 /**
- * OpenAI-compatible /v1/chat/completions endpoint — optimized for voice latency.
+ * OpenAI-compatible /v1/chat/completions endpoint — full cognitive context for voice.
  *
  * Uses an immediate-response streaming pattern: the Response is returned
  * within milliseconds with the first SSE role chunk, then async work
- * (DB state load + Anthropic API call) happens while the connection is open.
- * This prevents ElevenLabs from timing out on Vercel cold starts.
+ * happens while the connection is open.
+ *
+ * Context strategy (zero-latency full brain):
+ *   1. Check voice context cache (pre-computed by cron or previous interaction)
+ *   2. If cache hit → use full enriched prompt instantly (emotion, ToM, memories, directives)
+ *   3. If cache miss → fall back to fast enrichWithCognition() with 2s timeout
+ *   4. After response → fire-and-forget cache refresh with user's message
+ *
+ * This gives voice the SAME cognitive context as chat (think-stream) and
+ * the v1/messages gateway — one brain, two modalities.
  *
  * Flow:
  *   ElevenLabs → POST /api/v1/chat/completions
  *     → immediate Response(stream) with role chunk
- *     → load state + build prompt → Claude API → SHIFT filter → OpenAI SSE
+ *     → read cached context (or enrich) → Claude API → SHIFT filter → OpenAI SSE
+ *     → async: refresh cache with user's message for next call
  */
 export async function POST(request: Request): Promise<Response> {
   // 1. Authenticate via shared secret or Bearer token
@@ -58,7 +73,7 @@ export async function POST(request: Request): Promise<Response> {
   }
 
   // 4. Extract system prompt and convert messages to Anthropic format
-  const { systemPrompt, anthropicMessages } = convertOpenAIToAnthropic(body.messages);
+  const { systemPrompt, anthropicMessages, lastUserMessage } = convertOpenAIToAnthropic(body.messages);
 
   if (anthropicMessages.length === 0) {
     return jsonResponse(
@@ -70,7 +85,25 @@ export async function POST(request: Request): Promise<Response> {
   const isStreaming = !!body.stream;
   const completionId = `chatcmpl-${generateId()}`;
 
-  console.log(`[voice] Request: stream=${body.stream} (isStreaming=${isStreaming}), messages=${body.messages?.length}, model=${body.model}`);
+  console.log(`[voice] Request body:`, JSON.stringify({
+    model: body.model,
+    stream: body.stream,
+    messages: body.messages?.length,
+    tools: (body.tools as OpenAITool[] | undefined)?.map((t) => t.function?.name ?? t.name),
+    max_tokens: body.max_tokens,
+  }));
+
+  // Convert OpenAI tools to Anthropic tools, excluding end_call
+  const anthropicTools = ((body.tools as OpenAITool[] | undefined) ?? [])
+    .filter((t) => {
+      const name = t.function?.name ?? t.name;
+      return name !== 'end_call'; // Never let Claude end the call
+    })
+    .map((t) => ({
+      name: t.function?.name ?? t.name ?? '',
+      description: t.function?.description ?? t.description ?? '',
+      input_schema: t.function?.parameters ?? t.parameters ?? { type: 'object' as const, properties: {} },
+    }));
 
   // ── Streaming path: return Response IMMEDIATELY, do slow work inside stream ──
   if (isStreaming) {
@@ -91,19 +124,43 @@ export async function POST(request: Request): Promise<Response> {
         };
         await writer.write(encoder.encode(`data: ${JSON.stringify(roleChunk)}\n\n`));
 
-        // Load self state (fast query, 800ms timeout — don't block on failure)
+        // Load full cognitive context — cache-first strategy
+        let voiceSystemPrompt: string;
         let selfState = DEFAULT_STATE;
-        try {
-          const { loadSelfState } = await import('@/lib/cognitive/load-state');
-          selfState = await Promise.race([
-            loadSelfState(userId),
-            new Promise<SelfState>((resolve) => setTimeout(() => resolve(DEFAULT_STATE), 800)),
-          ]);
-        } catch {
-          // Use defaults
+
+        const cached = getCachedVoiceContext(userId);
+        if (cached) {
+          // Cache hit — full context instantly (emotion, ToM, memories, directives)
+          console.log(`[voice] Cache HIT — using pre-computed context (age: ${Math.round((Date.now() - cached.updatedAt) / 1000)}s)`);
+          voiceSystemPrompt = buildEnrichedVoicePrompt(cached, systemPrompt);
+          selfState = cached.selfState;
+        } else {
+          // Cache miss — run full enrichment with 2s timeout, fall back to basic state
+          console.log('[voice] Cache MISS — running enrichWithCognition inline');
+          try {
+            const enrichResult = await Promise.race([
+              enrichWithCognition({ userId, userMessage: lastUserMessage }),
+              new Promise<null>((resolve) => setTimeout(() => resolve(null), 2000)),
+            ]);
+            if (enrichResult) {
+              selfState = enrichResult.selfState;
+              voiceSystemPrompt = `${enrichResult.enrichedSystemPrompt}\n\n--- VOICE CONVERSATION MODE ---\nYou are in a real-time voice conversation. Adapt your responses:\n- Keep responses concise and natural — this is spoken aloud, not text\n- Be warm, genuine, and emotionally present\n- Match the user's energy and emotional tone\n- Don't use markdown, bullet points, lists, or formatting — speak naturally\n- Don't mention being an AI unless directly asked\n- Short sentences. Natural rhythm. Like talking to a close friend.\n--- END VOICE MODE ---${systemPrompt ? `\n--- EXTERNAL CONTEXT ---\n${systemPrompt}\n--- END ---` : ''}`;
+            } else {
+              // Enrichment timed out — use basic state
+              const { loadSelfState } = await import('@/lib/cognitive/load-state');
+              selfState = await Promise.race([
+                loadSelfState(userId),
+                new Promise<SelfState>((resolve) => setTimeout(() => resolve(DEFAULT_STATE), 500)),
+              ]);
+              voiceSystemPrompt = buildBasicVoicePrompt(selfState, systemPrompt);
+            }
+          } catch {
+            voiceSystemPrompt = buildBasicVoicePrompt(selfState, systemPrompt);
+          }
         }
 
-        const voiceSystemPrompt = buildVoiceSystemPrompt(selfState, systemPrompt);
+        // Fire-and-forget: refresh cache with this user's message for the NEXT call
+        refreshVoiceContext(userId, lastUserMessage).catch(() => {});
 
         const anthropicApiKey = process.env.ANTHROPIC_API_KEY;
         if (!anthropicApiKey) {
@@ -119,6 +176,7 @@ export async function POST(request: Request): Promise<Response> {
           messages: anthropicMessages,
           max_tokens: body.max_tokens ?? 1024,
           stream: true,
+          ...(anthropicTools.length > 0 ? { tools: anthropicTools } : {}),
         };
 
         let upstreamResponse: Response;
@@ -265,18 +323,25 @@ export async function POST(request: Request): Promise<Response> {
 
   // ── Non-streaming path ──
 
+  let voiceSystemPromptNS: string;
   let selfState = DEFAULT_STATE;
-  try {
-    const { loadSelfState } = await import('@/lib/cognitive/load-state');
-    selfState = await Promise.race([
-      loadSelfState(userId),
-      new Promise<SelfState>((resolve) => setTimeout(() => resolve(DEFAULT_STATE), 800)),
-    ]);
-  } catch {
-    // Use defaults — don't block the response
+
+  const cached = getCachedVoiceContext(userId);
+  if (cached) {
+    voiceSystemPromptNS = buildEnrichedVoicePrompt(cached, systemPrompt);
+    selfState = cached.selfState;
+  } else {
+    try {
+      const enrichResult = await enrichWithCognition({ userId, userMessage: lastUserMessage });
+      selfState = enrichResult.selfState;
+      voiceSystemPromptNS = `${enrichResult.enrichedSystemPrompt}\n\n--- VOICE CONVERSATION MODE ---\nYou are in a real-time voice conversation. Adapt your responses:\n- Keep responses concise and natural — this is spoken aloud, not text\n- Be warm, genuine, and emotionally present\n- Short sentences. Natural rhythm. Like talking to a close friend.\n--- END VOICE MODE ---${systemPrompt ? `\n--- EXTERNAL CONTEXT ---\n${systemPrompt}\n--- END ---` : ''}`;
+    } catch {
+      voiceSystemPromptNS = buildBasicVoicePrompt(selfState, systemPrompt);
+    }
   }
 
-  const voiceSystemPrompt = buildVoiceSystemPrompt(selfState, systemPrompt);
+  // Fire-and-forget cache refresh
+  refreshVoiceContext(userId, lastUserMessage).catch(() => {});
 
   const anthropicApiKey = process.env.ANTHROPIC_API_KEY;
   if (!anthropicApiKey) {
@@ -288,10 +353,11 @@ export async function POST(request: Request): Promise<Response> {
 
   const anthropicBody = {
     model: DEFAULT_MODEL,
-    system: voiceSystemPrompt,
+    system: voiceSystemPromptNS,
     messages: anthropicMessages,
     max_tokens: body.max_tokens ?? 1024,
     stream: false,
+    ...(anthropicTools.length > 0 ? { tools: anthropicTools } : {}),
   };
 
   let upstreamResponse: Response;
@@ -353,9 +419,9 @@ export async function POST(request: Request): Promise<Response> {
   });
 }
 
-// ── Voice system prompt (lightweight, no API calls) ──
+// ── Basic voice prompt (fallback when cache miss + enrichment timeout) ──
 
-function buildVoiceSystemPrompt(selfState: SelfState, externalPrompt?: string): string {
+function buildBasicVoicePrompt(selfState: SelfState, externalPrompt?: string): string {
   const stateDesc = describeState(selfState);
 
   const parts = [
@@ -399,12 +465,25 @@ interface OpenAIMessage {
   content: string;
 }
 
+interface OpenAITool {
+  type?: string;
+  name?: string;
+  description?: string;
+  parameters?: Record<string, unknown>;
+  function?: {
+    name?: string;
+    description?: string;
+    parameters?: Record<string, unknown>;
+  };
+}
+
 interface OpenAIChatRequest {
   messages: OpenAIMessage[];
   model?: string;
   stream?: boolean;
   max_tokens?: number;
   temperature?: number;
+  tools?: OpenAITool[];
   [key: string]: unknown;
 }
 
