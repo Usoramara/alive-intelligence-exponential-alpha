@@ -89,6 +89,8 @@ if (hasClerkKeys) {
     '/thoughts',
     '/system',
     '/openclaw',
+    '/voice',
+    '/stream',
     '/sign-in(.*)',
     '/sign-up(.*)',
     '/api(.*)',
