@@ -1,12 +1,5 @@
 {
-  "functions": {
-    "api/v1/chat/completions/route": {
-      "maxDuration": 60
-    },
-    "api/v1/messages/route": {
-      "maxDuration": 60
-    }
-  },
+  "framework": "nextjs",
   "crons": [{
     "path": "/api/cron",
     "schedule": "0 0 * * *"
