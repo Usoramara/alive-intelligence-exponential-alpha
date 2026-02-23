@@ -4,6 +4,7 @@ import {
   timestamp,
   real,
   integer,
+  boolean,
   jsonb,
   uuid,
   index,
@@ -33,6 +34,7 @@ export const conversations = pgTable(
       .notNull()
       .references(() => users.id, { onDelete: 'cascade' }),
     title: text('title').default('New conversation'),
+    channel: text('channel').default('web'), // 'web' | 'voice' | 'telegram' | etc.
     createdAt: timestamp('created_at').defaultNow().notNull(),
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
   },
@@ -52,6 +54,7 @@ export const messages = pgTable(
     content: text('content').notNull(),
     emotionShift: jsonb('emotion_shift'), // Partial<SelfState>
     metadata: jsonb('metadata'), // tool activities, etc.
+    enriched: boolean('enriched').default(false), // whether background enrichment has processed this message
     createdAt: timestamp('created_at').defaultNow().notNull(),
   },
   (t) => [index('messages_conversation_idx').on(t.conversationId)],

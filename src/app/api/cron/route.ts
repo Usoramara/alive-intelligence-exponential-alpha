@@ -6,6 +6,7 @@
 import { NextResponse } from 'next/server';
 import { processDueJobs } from '@/lib/tools/schedule';
 import { refreshVoiceContext, refreshOpenClawFiles } from '@/lib/cognitive/voice-context-cache';
+import { processUnprocessedVoiceTurns } from '@/lib/voice/enrichment-processor';
 
 // Protect with a cron secret to prevent unauthorized access
 const CRON_SECRET = process.env.CRON_SECRET;
@@ -19,7 +20,9 @@ export async function GET(request: Request): Promise<NextResponse> {
     }
   }
 
-  const results: { jobs: number; voiceCache: boolean; openclawFiles: boolean } = { jobs: 0, voiceCache: false, openclawFiles: false };
+  const results: { jobs: number; voiceCache: boolean; openclawFiles: boolean; voiceEnrichment: { processed: number; memoriesCreated: number; researchQueries: number } | null } = {
+    jobs: 0, voiceCache: false, openclawFiles: false, voiceEnrichment: null,
+  };
 
   // 1. Process scheduled jobs
   try {
@@ -57,6 +60,17 @@ export async function GET(request: Request): Promise<NextResponse> {
       console.log('[cron] OpenClaw files refreshed');
     } else if (openclawResult.status === 'rejected') {
       console.error('[cron] OpenClaw files refresh failed:', openclawResult.reason);
+    }
+
+    // 3. Process unprocessed voice turns (topic extraction, research, memory creation)
+    try {
+      const enrichResult = await processUnprocessedVoiceTurns(gatewayUserId);
+      if (enrichResult.processed > 0) {
+        results.voiceEnrichment = enrichResult;
+        console.log(`[cron] Voice enrichment: ${enrichResult.processed} messages, ${enrichResult.memoriesCreated} memories`);
+      }
+    } catch (err) {
+      console.error('[cron] Voice enrichment failed:', err);
     }
   }
 

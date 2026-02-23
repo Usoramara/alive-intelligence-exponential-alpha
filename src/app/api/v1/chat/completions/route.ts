@@ -4,6 +4,7 @@ import {
   buildEnrichedVoicePrompt,
   getOpenClawFiles,
 } from '@/lib/cognitive/voice-context-cache';
+import { persistVoiceTurn } from '@/lib/voice/persistence';
 import type { SelfState } from '@/core/types';
 
 const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';
@@ -199,6 +200,7 @@ export async function POST(request: Request): Promise<Response> {
         const decoder = new TextDecoder();
         const reader = upstreamBody.getReader();
         let sseRemainder = '';
+        let fullResponseText = '';
 
         while (true) {
           const { done, value } = await reader.read();
@@ -213,6 +215,7 @@ export async function POST(request: Request): Promise<Response> {
             if (!part.trim()) continue;
             const { isTextDelta, text } = parseAnthropicSSE(part);
             if (!isTextDelta || text === null) continue;
+            fullResponseText += text;
 
             await writer.write(encoder.encode(
               `data: ${JSON.stringify({
@@ -230,6 +233,7 @@ export async function POST(request: Request): Promise<Response> {
         if (sseRemainder.trim()) {
           const { isTextDelta, text } = parseAnthropicSSE(sseRemainder);
           if (isTextDelta && text !== null) {
+            fullResponseText += text;
             await writer.write(encoder.encode(
               `data: ${JSON.stringify({
                 id: completionId,
@@ -244,6 +248,13 @@ export async function POST(request: Request): Promise<Response> {
 
         // Send finish chunk and [DONE]
         await writeFinishAndDone(writer, encoder, completionId);
+
+        // Fire-and-forget: persist voice turn for intelligence evolution
+        persistVoiceTurn({
+          userId: userId!,
+          userMessage: lastUserMessage,
+          assistantResponse: fullResponseText,
+        }).catch(() => {});
       } catch (err) {
         console.error('[voice] Stream error:', err);
         try { await writeErrorAndDone(writer, encoder, completionId); } catch {}
@@ -324,6 +335,13 @@ export async function POST(request: Request): Promise<Response> {
 
   const responseJson = await upstreamResponse.json();
   const fullText = extractTextFromAnthropicResponse(responseJson);
+
+  // Fire-and-forget: persist voice turn for intelligence evolution
+  persistVoiceTurn({
+    userId,
+    userMessage: lastUserMessage,
+    assistantResponse: fullText,
+  }).catch(() => {});
 
   return jsonResponse({
     id: completionId,
