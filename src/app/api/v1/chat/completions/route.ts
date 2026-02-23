@@ -1,3 +1,4 @@
+import { after } from 'next/server';
 import {
   getCachedVoiceContext,
   refreshVoiceContext,
@@ -249,12 +250,18 @@ export async function POST(request: Request): Promise<Response> {
         // Send finish chunk and [DONE]
         await writeFinishAndDone(writer, encoder, completionId);
 
-        // Fire-and-forget: persist voice turn for intelligence evolution
-        persistVoiceTurn({
-          userId: userId!,
-          userMessage: lastUserMessage,
-          assistantResponse: fullResponseText,
-        }).catch(() => {});
+        // Persist voice turn — runs after response completes (survives function return)
+        after(async () => {
+          try {
+            await persistVoiceTurn({
+              userId: userId!,
+              userMessage: lastUserMessage,
+              assistantResponse: fullResponseText,
+            });
+          } catch (e) {
+            console.error('[voice] Persistence failed:', e);
+          }
+        });
       } catch (err) {
         console.error('[voice] Stream error:', err);
         try { await writeErrorAndDone(writer, encoder, completionId); } catch {}
@@ -336,12 +343,18 @@ export async function POST(request: Request): Promise<Response> {
   const responseJson = await upstreamResponse.json();
   const fullText = extractTextFromAnthropicResponse(responseJson);
 
-  // Fire-and-forget: persist voice turn for intelligence evolution
-  persistVoiceTurn({
-    userId,
-    userMessage: lastUserMessage,
-    assistantResponse: fullText,
-  }).catch(() => {});
+  // Persist voice turn — runs after response completes (survives function return)
+  after(async () => {
+    try {
+      await persistVoiceTurn({
+        userId,
+        userMessage: lastUserMessage,
+        assistantResponse: fullText,
+      });
+    } catch (e) {
+      console.error('[voice] Persistence failed:', e);
+    }
+  });
 
   return jsonResponse({
     id: completionId,
