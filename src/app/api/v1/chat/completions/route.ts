@@ -1,11 +1,8 @@
-import { updateCognitiveState } from '@/lib/cognitive/state-updater';
-import { parseShiftFromText } from '@/lib/cognitive/state-updater';
 import {
   getCachedVoiceContext,
   refreshVoiceContext,
   buildEnrichedVoicePrompt,
 } from '@/lib/cognitive/voice-context-cache';
-import { enrichWithCognition } from '@/lib/cognitive-middleware';
 import type { SelfState } from '@/core/types';
 
 const ANTHROPIC_API_URL = 'https://api.anthropic.com/v1/messages';
@@ -23,19 +20,16 @@ const DEFAULT_STATE: SelfState = {
  * within milliseconds with the first SSE role chunk, then async work
  * happens while the connection is open.
  *
- * Context strategy (zero-latency full brain):
+ * Context strategy (zero-latency):
  *   1. Check voice context cache (pre-computed by cron or previous interaction)
- *   2. If cache hit → use full enriched prompt instantly (emotion, ToM, memories, directives)
- *   3. If cache miss → fall back to fast enrichWithCognition() with 2s timeout
- *   4. After response → fire-and-forget cache refresh with user's message
- *
- * This gives voice the SAME cognitive context as chat (think-stream) and
- * the v1/messages gateway — one brain, two modalities.
+ *   2. If cache hit → use full enriched prompt instantly (with SHIFT instructions stripped)
+ *   3. If cache miss → use basic voice prompt immediately (zero delay)
+ *   4. Fire-and-forget cache refresh for NEXT call
  *
  * Flow:
  *   ElevenLabs → POST /api/v1/chat/completions
  *     → immediate Response(stream) with role chunk
- *     → read cached context (or enrich) → Claude API → SHIFT filter → OpenAI SSE
+ *     → read cached context (or basic fallback) → Claude API → clean OpenAI SSE proxy
  *     → async: refresh cache with user's message for next call
  */
 export async function POST(request: Request): Promise<Response> {
@@ -132,40 +126,21 @@ export async function POST(request: Request): Promise<Response> {
         if (cached) {
           // Cache hit — full context instantly (emotion, ToM, memories, directives)
           console.log(`[voice] Cache HIT — using pre-computed context (age: ${Math.round((Date.now() - cached.updatedAt) / 1000)}s)`);
-          voiceSystemPrompt = buildEnrichedVoicePrompt(cached, systemPrompt);
+          voiceSystemPrompt = stripShiftInstruction(buildEnrichedVoicePrompt(cached, systemPrompt));
           selfState = cached.selfState;
         } else {
-          // Cache miss — run full enrichment with 2s timeout, fall back to basic state
-          console.log('[voice] Cache MISS — running enrichWithCognition inline');
-          try {
-            const enrichResult = await Promise.race([
-              enrichWithCognition({ userId, userMessage: lastUserMessage }),
-              new Promise<null>((resolve) => setTimeout(() => resolve(null), 2000)),
-            ]);
-            if (enrichResult) {
-              selfState = enrichResult.selfState;
-              voiceSystemPrompt = `${enrichResult.enrichedSystemPrompt}\n\n--- VOICE CONVERSATION MODE ---\nYou are in a real-time voice conversation. Adapt your responses:\n- Keep responses concise and natural — this is spoken aloud, not text\n- Be warm, genuine, and emotionally present\n- Match the user's energy and emotional tone\n- Don't use markdown, bullet points, lists, or formatting — speak naturally\n- Don't mention being an AI unless directly asked\n- Short sentences. Natural rhythm. Like talking to a close friend.\n--- END VOICE MODE ---${systemPrompt ? `\n--- EXTERNAL CONTEXT ---\n${systemPrompt}\n--- END ---` : ''}`;
-            } else {
-              // Enrichment timed out — use basic state
-              const { loadSelfState } = await import('@/lib/cognitive/load-state');
-              selfState = await Promise.race([
-                loadSelfState(userId),
-                new Promise<SelfState>((resolve) => setTimeout(() => resolve(DEFAULT_STATE), 500)),
-              ]);
-              voiceSystemPrompt = buildBasicVoicePrompt(selfState, systemPrompt);
-            }
-          } catch {
-            voiceSystemPrompt = buildBasicVoicePrompt(selfState, systemPrompt);
-          }
+          // Cache miss — use basic prompt IMMEDIATELY, zero enrichment delay
+          console.log('[voice] Cache MISS — using basic prompt (zero-latency fallback)');
+          voiceSystemPrompt = buildBasicVoicePrompt(selfState, systemPrompt);
         }
 
-        // Fire-and-forget: refresh cache with this user's message for the NEXT call
+        // Fire-and-forget: refresh cache for NEXT call (populates cache after cold start)
         refreshVoiceContext(userId, lastUserMessage).catch(() => {});
 
         const anthropicApiKey = process.env.ANTHROPIC_API_KEY;
         if (!anthropicApiKey) {
           console.error('[voice] No ANTHROPIC_API_KEY configured');
-          await writer.close();
+          await writeErrorAndDone(writer, encoder, completionId, "I can't connect to my brain right now. Try again in a moment.");
           return;
         }
 
@@ -180,6 +155,8 @@ export async function POST(request: Request): Promise<Response> {
         };
 
         let upstreamResponse: Response;
+        const controller = new AbortController();
+        const abortTimeout = setTimeout(() => controller.abort(), 15_000);
         try {
           upstreamResponse = await fetch(ANTHROPIC_API_URL, {
             method: 'POST',
@@ -189,17 +166,22 @@ export async function POST(request: Request): Promise<Response> {
               'anthropic-version': '2023-06-01',
             },
             body: JSON.stringify(anthropicBody),
+            signal: controller.signal,
           });
         } catch (fetchError) {
-          console.error('[voice] Fetch to Anthropic failed:', fetchError);
-          await writer.close();
+          clearTimeout(abortTimeout);
+          const isTimeout = fetchError instanceof DOMException && fetchError.name === 'AbortError';
+          console.error(`[voice] Fetch to Anthropic ${isTimeout ? 'timed out' : 'failed'}:`, fetchError);
+          await writeErrorAndDone(writer, encoder, completionId,
+            isTimeout ? "Sorry, I took too long to think. Let me try again." : "I'm having a moment, give me a second.");
           return;
         }
+        clearTimeout(abortTimeout);
 
         if (!upstreamResponse.ok) {
           const errorBody = await upstreamResponse.text();
           console.error('[voice] Anthropic API error:', upstreamResponse.status, errorBody);
-          await writer.close();
+          await writeErrorAndDone(writer, encoder, completionId, "Something went wrong on my end. Let me try again.");
           return;
         }
 
@@ -212,11 +194,9 @@ export async function POST(request: Request): Promise<Response> {
         }
 
         // Read Anthropic stream, transform to OpenAI SSE, write to client
+        // Clean proxy — no SHIFT filtering, no content manipulation
         const decoder = new TextDecoder();
         const reader = upstreamBody.getReader();
-        let accumulatedText = '';
-        let pendingTextChunks: string[] = [];
-        let buffering = false;
         let sseRemainder = '';
 
         while (true) {
@@ -232,17 +212,6 @@ export async function POST(request: Request): Promise<Response> {
             if (!part.trim()) continue;
             const { isTextDelta, text } = parseAnthropicSSE(part);
             if (!isTextDelta || text === null) continue;
-
-            accumulatedText += text;
-
-            if (!buffering && looksLikeShiftStarting(accumulatedText)) {
-              buffering = true;
-            }
-
-            if (buffering) {
-              pendingTextChunks.push(text);
-              continue;
-            }
 
             await writer.write(encoder.encode(
               `data: ${JSON.stringify({
@@ -260,45 +229,13 @@ export async function POST(request: Request): Promise<Response> {
         if (sseRemainder.trim()) {
           const { isTextDelta, text } = parseAnthropicSSE(sseRemainder);
           if (isTextDelta && text !== null) {
-            accumulatedText += text;
-            if (!buffering && looksLikeShiftStarting(accumulatedText)) {
-              buffering = true;
-            }
-            if (buffering) {
-              pendingTextChunks.push(text);
-            } else {
-              await writer.write(encoder.encode(
-                `data: ${JSON.stringify({
-                  id: completionId,
-                  object: 'chat.completion.chunk',
-                  created: Math.floor(Date.now() / 1000),
-                  model: DEFAULT_MODEL,
-                  choices: [{ index: 0, delta: { content: text }, finish_reason: null }],
-                })}\n\n`
-              ));
-            }
-          }
-        }
-
-        // Update cognitive state from SHIFT block
-        if (accumulatedText) {
-          const { emotionShift } = parseShiftFromText('\n' + accumulatedText);
-          if (emotionShift) {
-            updateCognitiveState(userId, selfState, emotionShift).catch(() => {});
-          }
-        }
-
-        // Flush pending text chunks (if they weren't part of a SHIFT block)
-        if (pendingTextChunks.length > 0) {
-          const shiftStart = findShiftBlockStart(accumulatedText);
-          if (shiftStart < 0) {
             await writer.write(encoder.encode(
               `data: ${JSON.stringify({
                 id: completionId,
                 object: 'chat.completion.chunk',
                 created: Math.floor(Date.now() / 1000),
                 model: DEFAULT_MODEL,
-                choices: [{ index: 0, delta: { content: pendingTextChunks.join('') }, finish_reason: null }],
+                choices: [{ index: 0, delta: { content: text }, finish_reason: null }],
               })}\n\n`
             ));
           }
@@ -308,7 +245,7 @@ export async function POST(request: Request): Promise<Response> {
         await writeFinishAndDone(writer, encoder, completionId);
       } catch (err) {
         console.error('[voice] Stream error:', err);
-        try { await writer.close(); } catch {}
+        try { await writeErrorAndDone(writer, encoder, completionId); } catch {}
       }
     })();
 
@@ -328,16 +265,10 @@ export async function POST(request: Request): Promise<Response> {
 
   const cached = getCachedVoiceContext(userId);
   if (cached) {
-    voiceSystemPromptNS = buildEnrichedVoicePrompt(cached, systemPrompt);
+    voiceSystemPromptNS = stripShiftInstruction(buildEnrichedVoicePrompt(cached, systemPrompt));
     selfState = cached.selfState;
   } else {
-    try {
-      const enrichResult = await enrichWithCognition({ userId, userMessage: lastUserMessage });
-      selfState = enrichResult.selfState;
-      voiceSystemPromptNS = `${enrichResult.enrichedSystemPrompt}\n\n--- VOICE CONVERSATION MODE ---\nYou are in a real-time voice conversation. Adapt your responses:\n- Keep responses concise and natural — this is spoken aloud, not text\n- Be warm, genuine, and emotionally present\n- Short sentences. Natural rhythm. Like talking to a close friend.\n--- END VOICE MODE ---${systemPrompt ? `\n--- EXTERNAL CONTEXT ---\n${systemPrompt}\n--- END ---` : ''}`;
-    } catch {
-      voiceSystemPromptNS = buildBasicVoicePrompt(selfState, systemPrompt);
-    }
+    voiceSystemPromptNS = buildBasicVoicePrompt(selfState, systemPrompt);
   }
 
   // Fire-and-forget cache refresh
@@ -392,12 +323,6 @@ export async function POST(request: Request): Promise<Response> {
 
   const responseJson = await upstreamResponse.json();
   const fullText = extractTextFromAnthropicResponse(responseJson);
-  const { cleanText, emotionShift } = parseShiftFromText('\n' + fullText);
-  const stripped = cleanText.replace(/\n---\s*$/, '').trim();
-
-  if (emotionShift) {
-    updateCognitiveState(userId, selfState, emotionShift).catch(() => {});
-  }
 
   return jsonResponse({
     id: completionId,
@@ -407,7 +332,7 @@ export async function POST(request: Request): Promise<Response> {
     choices: [
       {
         index: 0,
-        message: { role: 'assistant', content: stripped },
+        message: { role: 'assistant', content: fullText.trim() },
         finish_reason: 'stop',
       },
     ],
@@ -434,11 +359,7 @@ Voice conversation guidelines:
 - Be warm, genuine, and emotionally present
 - Match the user's energy and emotional tone
 - Don't use markdown, lists, or formatting — speak naturally
-- Don't mention being an AI unless directly asked
-
-After your response, on a new line, output:
-SHIFT: {"valence": 0.0, "energy": 0.0}
-This represents how this interaction changes your inner state. Range: -0.5 to 0.5.`,
+- Don't mention being an AI unless directly asked`,
   ];
 
   if (externalPrompt) {
@@ -456,6 +377,15 @@ function describeState(s: SelfState): string {
   if (s.energy > 0.7) parts.push('energetic');
   if (s.curiosity > 0.7) parts.push('curious');
   return parts.join(', ');
+}
+
+/** Strip SHIFT instruction blocks from enriched prompts so Claude doesn't output them in voice */
+function stripShiftInstruction(prompt: string): string {
+  return prompt
+    .replace(/After your response, on a new line, output[\s\S]*?Don't be timid with your shifts\./, '')
+    .replace(/After your response, on a new line, output[\s\S]*?Range: -0\.5 to 0\.5\./, '')
+    .replace(/\n{3,}/g, '\n\n')
+    .trim();
 }
 
 // ── OpenAI → Anthropic conversion ──
@@ -548,19 +478,6 @@ function parseAnthropicSSE(event: string): { isTextDelta: boolean; text: string 
   return { isTextDelta: false, text: null };
 }
 
-function looksLikeShiftStarting(text: string): boolean {
-  const tail = text.slice(-30);
-  return /---\s*$/.test(tail) || /SHIFT/.test(tail);
-}
-
-function findShiftBlockStart(text: string): number {
-  const dashShift = text.search(/\n---[\s\n]*SHIFT:\s*\{/);
-  if (dashShift >= 0) return dashShift;
-  const bareShift = text.search(/\nSHIFT:\s*\{/);
-  if (bareShift >= 0) return bareShift;
-  return -1;
-}
-
 // ── Helpers ──
 
 async function writeFinishAndDone(
@@ -576,6 +493,33 @@ async function writeFinishAndDone(
     choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
   };
   await writer.write(encoder.encode(`data: ${JSON.stringify(finishChunk)}\n\n`));
+  await writer.write(encoder.encode('data: [DONE]\n\n'));
+  await writer.close();
+}
+
+async function writeErrorAndDone(
+  writer: WritableStreamDefaultWriter<unknown>,
+  encoder: TextEncoder,
+  completionId: string,
+  msg = "I'm having a moment, give me a second.",
+) {
+  const now = Math.floor(Date.now() / 1000);
+  // Send spoken error content so ElevenLabs has something to say
+  await writer.write(encoder.encode(`data: ${JSON.stringify({
+    id: completionId,
+    object: 'chat.completion.chunk',
+    created: now,
+    model: DEFAULT_MODEL,
+    choices: [{ index: 0, delta: { content: msg }, finish_reason: null }],
+  })}\n\n`));
+  // Finish chunk + [DONE] sentinel — valid SSE stream closure
+  await writer.write(encoder.encode(`data: ${JSON.stringify({
+    id: completionId,
+    object: 'chat.completion.chunk',
+    created: now,
+    model: DEFAULT_MODEL,
+    choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+  })}\n\n`));
   await writer.write(encoder.encode('data: [DONE]\n\n'));
   await writer.close();
 }
