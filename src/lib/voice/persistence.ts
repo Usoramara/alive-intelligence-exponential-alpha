@@ -65,10 +65,15 @@ export async function persistVoiceTurn(params: {
     // Non-critical
   }
 
-  // 5. Async SHIFT extraction (fire-and-forget)
-  extractVoiceShift({ userId, userMessage, assistantResponse }).catch((err) => {
+  // 5. SHIFT extraction (awaited so it completes within after() lifecycle)
+  try {
+    const shift = await extractVoiceShift({ userId, userMessage, assistantResponse });
+    if (shift) {
+      console.log(`[voice-persist] SHIFT applied:`, shift);
+    }
+  } catch (err) {
     console.error('[voice-persist] SHIFT extraction failed:', err);
-  });
+  }
 
   console.log(`[voice-persist] Turn saved to conversation ${conversationId}`);
 }
