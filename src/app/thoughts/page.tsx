@@ -29,6 +29,9 @@ export default function ThoughtsPage() {
             <Link href="/intelligence" className="text-xs font-mono text-white/30 hover:text-white/60 transition-colors">
               Intelligence →
             </Link>
+            <Link href="/stream" className="text-xs font-mono text-white/30 hover:text-white/60 transition-colors">
+              Stream →
+            </Link>
             <Link href="/execution/chat?session=main" className="text-xs font-mono text-white/30 hover:text-white/60 transition-colors">
               Execution →
             </Link>

@@ -39,6 +39,9 @@ export default function IntelligencePage() {
             </div>
           </div>
           <div className="flex gap-4">
+            <Link href="/stream" className="text-xs font-mono text-white/25 hover:text-white/50 transition-colors">
+              Stream &rarr;
+            </Link>
             <Link href="/system" className="text-xs font-mono text-white/25 hover:text-white/50 transition-colors">
               System &rarr;
             </Link>

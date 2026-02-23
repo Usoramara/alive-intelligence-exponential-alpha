@@ -37,6 +37,9 @@ export default function OpenClawPage() {
           <Link href="/intelligence" className="text-xs font-mono text-white/25 hover:text-white/50 transition-colors">
             Intelligence &rarr;
           </Link>
+          <Link href="/stream" className="text-xs font-mono text-white/25 hover:text-white/50 transition-colors">
+            Stream &rarr;
+          </Link>
           <Link href="/execution/chat?session=main" className="text-xs font-mono text-white/25 hover:text-white/50 transition-colors">
             Execution &rarr;
           </Link>
