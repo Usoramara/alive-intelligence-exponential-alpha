@@ -1,4 +1,4 @@
-import { enrichWithCognition } from '@/lib/cognitive-middleware';
+import { enrichWithCognition, type CognitionRawSignals } from '@/lib/cognitive-middleware';
 import { getRecentMemories } from '@/lib/memory/manager';
 import { callOpenClaw } from '@/lib/openclaw-rpc';
 import { getDb } from '@/db';
@@ -24,6 +24,7 @@ import type { SelfState } from '@/core/types';
 interface VoiceContextEntry {
   enrichedSystemPrompt: string;
   selfState: SelfState;
+  rawSignals: CognitionRawSignals;
   recentMemorySummary: string;
   openclawFiles: OpenClawFilesEntry | null;
   updatedAt: number;
@@ -224,7 +225,7 @@ export async function refreshVoiceContext(
     refreshOpenClawFiles().catch(() => null),
   ]);
 
-  const { enrichedSystemPrompt, selfState } = cognitionResult;
+  const { enrichedSystemPrompt, selfState, rawSignals } = cognitionResult;
 
   // Also fetch recent memory summary for voice-specific context
   let recentMemorySummary = '';
@@ -240,6 +241,7 @@ export async function refreshVoiceContext(
   const entry: VoiceContextEntry = {
     enrichedSystemPrompt,
     selfState,
+    rawSignals,
     recentMemorySummary,
     openclawFiles,
     updatedAt: Date.now(),
