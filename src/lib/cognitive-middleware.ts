@@ -3,8 +3,8 @@ import { cognitiveStates } from '@/db/schema';
 import { eq } from 'drizzle-orm';
 import type { SelfState } from '@/core/types';
 import { buildBehavioralInstructions, type ThinkParams } from '@/lib/claude';
-import { detectEmotion, type EmotionDetectionResult } from '@/lib/cognitive/detect-emotion';
-import { inferTheoryOfMind, type TomResult } from '@/lib/cognitive/tom-inference';
+import { detectEmotion } from '@/lib/cognitive/detect-emotion';
+import { inferTheoryOfMind } from '@/lib/cognitive/tom-inference';
 import { searchMemories } from '@/lib/memory/manager';
 
 const DEFAULT_STATE: SelfState = {
@@ -45,17 +45,11 @@ function selfStateToDescription(state: SelfState): string {
  * This is the core of "Wybe as the cognitive brain" — every request from
  * OpenClaw passes through here before hitting the real Claude API.
  */
-export interface CognitionRawSignals {
-  emotions: EmotionDetectionResult | null;
-  tom: TomResult | null;
-  memories: string[];
-}
-
 export async function enrichWithCognition(params: {
   userId: string;
   userMessage: string;
   existingSystemPrompt?: string;
-}): Promise<{ enrichedSystemPrompt: string; selfState: SelfState; rawSignals: CognitionRawSignals }> {
+}): Promise<{ enrichedSystemPrompt: string; selfState: SelfState }> {
   const { userId, userMessage, existingSystemPrompt } = params;
 
   // Run all cognitive operations in parallel
@@ -112,11 +106,6 @@ This represents how this interaction changes your inner state. Range: -0.5 to 0.
   return {
     enrichedSystemPrompt: parts.join('\n'),
     selfState,
-    rawSignals: {
-      emotions,
-      tom,
-      memories: relevantMemories.map(m => m.content),
-    },
   };
 }
 
