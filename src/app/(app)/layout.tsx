@@ -111,12 +111,14 @@ export default function AppLayout({
             >
               Execution
             </Link>
-            <Link
-              href="/voice"
+            <a
+              href="https://human-voice.vercel.app/"
+              target="_blank"
+              rel="noopener noreferrer"
               className="block px-3 py-2 text-xs font-mono text-white/30 hover:text-white/60 transition-colors"
             >
               Voice
-            </Link>
+            </a>
             <Link
               href="/settings"
               className="block px-3 py-2 text-xs font-mono text-white/30 hover:text-white/60 transition-colors"
