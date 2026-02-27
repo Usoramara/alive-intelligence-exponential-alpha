@@ -89,6 +89,7 @@ export const memories = pgTable(
     significance: real('significance').notNull().default(0.5),
     tags: text('tags').array(),
     embedding: vector('embedding', { dimensions: 384 }), // all-MiniLM-L6-v2 (local)
+    lastAccessedAt: timestamp('last_accessed_at').defaultNow(), // for significance decay
     createdAt: timestamp('created_at').defaultNow().notNull(),
   },
   (t) => [index('memories_user_idx').on(t.userId)],
@@ -149,6 +150,42 @@ export const agentFiles = pgTable(
     updatedAt: timestamp('updated_at').defaultNow().notNull(),
   },
   (t) => [uniqueIndex('agent_files_agent_file_idx').on(t.agentId, t.fileName)],
+);
+
+// ── Consciousness Stream (persistent inner thoughts) ──
+
+export const streamEntries = pgTable(
+  'stream_entries',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    text: text('text').notNull(),
+    source: text('source').notNull(), // engine that generated this thought
+    flavor: text('flavor').notNull(), // 'wandering' | 'emotional' | 'memory' | etc.
+    intensity: real('intensity').notNull().default(0.5),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (t) => [index('stream_entries_user_idx').on(t.userId)],
+);
+
+// ── Pending Insights (queued for next interaction) ──
+
+export const pendingInsights = pgTable(
+  'pending_insights',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    type: text('type').notNull(), // 'memory-connection' | 'reflection' | 'proactive-thought'
+    content: text('content').notNull(),
+    priority: real('priority').notNull().default(0.5), // 0-1
+    delivered: boolean('delivered').default(false),
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (t) => [index('pending_insights_user_idx').on(t.userId)],
 );
 
 // ── Channel Conversations (persistent channel history) ──

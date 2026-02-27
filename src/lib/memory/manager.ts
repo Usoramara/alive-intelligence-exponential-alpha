@@ -1,6 +1,6 @@
 import { getDb } from '@/db';
 import { memories } from '@/db/schema';
-import { eq, desc, sql, and } from 'drizzle-orm';
+import { eq, desc, sql, and, inArray } from 'drizzle-orm';
 import { embed } from './embeddings';
 
 export interface MemoryInput {
@@ -75,6 +75,15 @@ export async function searchMemories(
     )
     .orderBy(sql`${memories.embedding} <=> ${JSON.stringify(queryEmbedding)}::vector`)
     .limit(limit);
+
+  // Touch lastAccessedAt for retrieved memories (supports significance decay)
+  if (results.length > 0) {
+    const ids = results.map(r => r.id);
+    db.update(memories)
+      .set({ lastAccessedAt: new Date() })
+      .where(inArray(memories.id, ids))
+      .catch(() => {}); // fire-and-forget
+  }
 
   return results;
 }
