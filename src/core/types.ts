@@ -68,6 +68,9 @@ export type SignalType =
   | 'prediction-error'
   // Metacognition signals
   | 'metacognition-update'
+  | 'metacognition-reflection'
+  // Emotion trajectory signals
+  | 'emotion-trajectory'
   // Resource management signals
   | 'resource-budget'
   // Tool activity signals

@@ -45,7 +45,14 @@ export interface SignalPayloadMap {
   'valence-shift': { delta: number; source: string };
 
   // Inner world signals
-  'imagination-result': { scenario: string; valence: number; type: string };
+  'imagination-result': {
+    scenario: string;
+    valence: number;
+    type: string;
+    valueAlignment?: number;
+    goalRelevance?: number;
+    actionability?: number;
+  };
   'intuition-alert': { message: string; confidence: number; basis: string };
   'hope-worry-update': { hopes: Array<{ content: string; intensity: number }>; worries: Array<{ content: string; intensity: number }> };
   'strategy-update': { currentPriority: { description: string; priority: number; progress: number } };
@@ -91,6 +98,16 @@ export interface SignalPayloadMap {
 
   // Metacognition signals
   'metacognition-update': { uncertainty: number; processingLoad: number; emotionalRegulation: string | null; coherence: number };
+  'metacognition-reflection': { reflection: string; adjustments: string[]; timestamp: number };
+
+  // Emotion trajectory signals
+  'emotion-trajectory': {
+    pattern: 'spiraling-down' | 'spiraling-up' | 'stabilizing' | 'oscillating' | 'neutral';
+    valenceSlope: number;
+    arousalSlope: number;
+    windowSize: number;
+    confidence: number;
+  };
 
   // Resource management signals
   'resource-budget': { sonnetRemaining: number; suggestedMaxTokens: number; useLite: boolean };

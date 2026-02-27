@@ -3,30 +3,38 @@ import { ENGINE_IDS, SIGNAL_PRIORITIES } from '../../constants';
 import type { Signal, SignalType } from '../../types';
 import { isSignal } from '../../types';
 
-interface DefaultModeThought {
-  thought: string;
-  timestamp: number;
-}
-
-type CounterfactualType = 'negation' | 'temporal-shift' | 'perspective-shift' | 'amplification';
-
-interface Counterfactual {
-  premise: string;
-  type: CounterfactualType;
-  variation: string;
-  valence: number; // -1 to 1: how this scenario feels
+interface ScenarioResult {
+  scenario: string;
+  valence: number;
+  type: string;
+  valueAlignment: number;
+  goalRelevance: number;
+  actionability: number;
 }
 
 export class ImaginationEngine extends Engine {
   private lastSimulation = 0;
-  private simulationCooldown = 5000;
+  private simulationCooldown = 5000; // 5s between simulations
+
+  // Context for grounded imagination
+  private lastConversationContent: string | null = null;
+  private recentMemories: string[] = [];
+  private currentEmotionalContext: { valence: number; arousal: number } | null = null;
+
+  // T2 escalation tracking
+  private complexityScore = 0; // Accumulates when situations are emotionally complex
+  private lastT2Call = 0;
+  private t2Cooldown = 30000; // 30s between Sonnet calls
+
+  // Feed high-relevance results to Arbiter
+  private readonly ARBITER_RELEVANCE_THRESHOLD = 0.6;
 
   constructor() {
     super(ENGINE_IDS.IMAGINATION);
   }
 
   protected subscribesTo(): SignalType[] {
-    return ['bound-representation', 'default-mode-thought', 'stream-thought', 'memory-result'];
+    return ['bound-representation', 'default-mode-thought', 'stream-thought', 'memory-result', 'emotion-detected', 'emotion-trajectory'];
   }
 
   protected process(signals: Signal[]): void {
@@ -37,163 +45,143 @@ export class ImaginationEngine extends Engine {
     }
 
     for (const signal of signals) {
+      // Gather context
+      if (isSignal(signal, 'memory-result')) {
+        this.recentMemories = signal.payload.items.slice(0, 5);
+        continue;
+      }
+      if (isSignal(signal, 'emotion-detected')) {
+        this.currentEmotionalContext = {
+          valence: signal.payload.valence,
+          arousal: signal.payload.arousal,
+        };
+        continue;
+      }
+      if (isSignal(signal, 'emotion-trajectory')) {
+        const trajectory = signal.payload;
+        // Complex emotional situations increase complexity score
+        if (trajectory.pattern === 'oscillating' || trajectory.pattern === 'spiraling-down') {
+          this.complexityScore = Math.min(1, this.complexityScore + 0.2);
+        }
+        continue;
+      }
+
+      // Trigger imagination on content signals
+      if (isSignal(signal, 'bound-representation')) {
+        const bound = signal.payload;
+        if (bound.content.length > 15) {
+          this.lastConversationContent = bound.content;
+          this.generateGroundedScenario(bound.content);
+          return;
+        }
+      }
+
       if (isSignal(signal, 'stream-thought')) {
         const payload = signal.payload as unknown as { thought: string };
-        this.simulateCounterfactual(payload.thought);
+        this.generateGroundedScenario(payload.thought);
         return;
       }
 
       if (isSignal(signal, 'default-mode-thought')) {
-        const thought = signal.payload as DefaultModeThought;
-        this.simulateCounterfactual(thought.thought);
+        const thought = signal.payload;
+        this.generateGroundedScenario(thought.thought);
         return;
       }
-
-      if (isSignal(signal, 'bound-representation')) {
-        const bound = signal.payload;
-        if (bound.content.length > 20) {
-          this.simulateEnriched(bound.content);
-          return;
-        }
-      }
     }
 
     this.status = 'idle';
   }
 
-  private simulateCounterfactual(premise: string): void {
+  /**
+   * Generate grounded counterfactual scenarios via Claude.
+   * All imagination is Claude-generated — no templates.
+   * Scenarios are evaluated for value alignment, goal relevance, and actionability.
+   */
+  private async generateGroundedScenario(context: string): Promise<void> {
     this.status = 'processing';
     this.lastSimulation = Date.now();
 
-    // Structured counterfactual generation (no API call)
-    const counterfactuals = this.generateCounterfactuals(premise);
-    const selected = counterfactuals[Math.floor(Math.random() * counterfactuals.length)];
-
-    this.emit('imagination-result', {
-      scenario: selected.variation,
-      source: 'counterfactual',
-      type: selected.type,
-      valence: selected.valence,
-      premise: selected.premise,
-      timestamp: Date.now(),
-    }, {
-      target: ENGINE_IDS.HOPE_WORRY,
-      priority: SIGNAL_PRIORITIES.IDLE,
-    });
-
-    // Counterfactuals affect emotional state based on valence
-    if (selected.valence < -0.3) {
-      this.selfState.nudge('arousal', 0.02);
-    } else if (selected.valence > 0.3) {
-      this.selfState.nudge('valence', 0.02);
-    }
-
-    this.debugInfo = `Imagined [${selected.type}]: "${selected.variation.slice(0, 35)}..."`;
-    this.status = 'idle';
-  }
-
-  private generateCounterfactuals(premise: string): Counterfactual[] {
     const state = this.selfState.get();
-    const results: Counterfactual[] = [];
 
-    // Negation: "What if the opposite were true?"
-    results.push({
-      premise,
-      type: 'negation',
-      variation: `What if the opposite were true? Instead of "${premise.slice(0, 40)}..." — what if things were entirely different?`,
-      valence: -state.valence * 0.3, // Opposite of current mood
-    });
+    // Decide T1 (Haiku) vs T2 (Sonnet) based on complexity
+    const now = Date.now();
+    const useT2 = this.complexityScore > 0.7 && now - this.lastT2Call > this.t2Cooldown;
 
-    // Temporal shift: "What if this happened at a different time?"
-    results.push({
-      premise,
-      type: 'temporal-shift',
-      variation: `If I'd encountered this thought earlier, would I have felt it differently? Time changes the texture of everything...`,
-      valence: 0,
-    });
+    if (useT2) {
+      this.lastT2Call = now;
+      this.complexityScore = Math.max(0, this.complexityScore - 0.5);
+    }
 
-    // Perspective shift: "How would someone else experience this?"
-    results.push({
-      premise,
-      type: 'perspective-shift',
-      variation: `Seeing this through their eyes, it might feel completely different. What appears certain from one angle dissolves from another...`,
-      valence: state.curiosity * 0.3,
-    });
-
-    // Amplification: "What if this feeling were 10x stronger?"
-    results.push({
-      premise,
-      type: 'amplification',
-      variation: `If this feeling were amplified tenfold, what would it reveal? Sometimes the quiet signals carry the most important messages...`,
-      valence: state.valence * 0.5,
-    });
-
-    return results;
-  }
-
-  private async simulateEnriched(context: string): Promise<void> {
-    this.status = 'processing';
-    this.lastSimulation = Date.now();
-
-    // First generate local counterfactuals
-    const counterfactuals = this.generateCounterfactuals(context);
-    const localPick = counterfactuals[Math.floor(Math.random() * counterfactuals.length)];
-
-    // Then optionally enrich via Haiku (cheaper than Sonnet)
     try {
+      // Build rich context for grounded imagination
+      const contextParts: string[] = [];
+
+      if (this.lastConversationContent && this.lastConversationContent !== context) {
+        contextParts.push(`Recent conversation: ${this.lastConversationContent.slice(0, 100)}`);
+      }
+      if (this.recentMemories.length > 0) {
+        contextParts.push(`Relevant memories: ${this.recentMemories.slice(0, 3).join('; ')}`);
+      }
+      if (this.currentEmotionalContext) {
+        contextParts.push(`Current emotional state: valence=${this.currentEmotionalContext.valence.toFixed(2)}, arousal=${this.currentEmotionalContext.arousal.toFixed(2)}`);
+      }
+
       const response = await fetch('/api/mind/imagine', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           premise: context,
-          variations: counterfactuals.map(c => ({
-            type: c.type,
-            variation: c.variation,
-          })),
-          selfState: this.selfState.get(),
+          selfState: state,
+          // Pass context instead of template variations
+          grounded: true,
+          conversationContext: contextParts.join('\n'),
+          useDeepReasoning: useT2,
+          memories: this.recentMemories.slice(0, 3),
         }),
       });
 
-      if (response.ok) {
-        const result = await response.json() as {
-          scenario: string;
-          valence: number;
-          type: string;
-        };
-
-        this.emit('imagination-result', {
-          scenario: result.scenario,
-          source: 'enriched-counterfactual',
-          type: result.type,
-          valence: result.valence,
-          timestamp: Date.now(),
-        }, {
-          target: [ENGINE_IDS.ARBITER, ENGINE_IDS.HOPE_WORRY],
-          priority: SIGNAL_PRIORITIES.LOW,
-        });
-
-        this.selfState.nudge('curiosity', 0.03);
-        this.debugInfo = `Imagined (enriched): "${result.scenario.slice(0, 35)}..."`;
+      if (!response.ok) {
         this.status = 'idle';
         return;
       }
+
+      const result = await response.json() as ScenarioResult | { scenarios: ScenarioResult[] };
+
+      // Handle single or multiple scenarios
+      const scenarios = 'scenarios' in result ? result.scenarios : [result];
+
+      for (const scenario of scenarios) {
+        const relevance = (scenario.goalRelevance ?? 0.5) + (scenario.actionability ?? 0.3);
+        const sendToArbiter = relevance >= this.ARBITER_RELEVANCE_THRESHOLD;
+
+        this.emit('imagination-result', {
+          scenario: scenario.scenario,
+          type: scenario.type,
+          valence: scenario.valence,
+          valueAlignment: scenario.valueAlignment,
+          goalRelevance: scenario.goalRelevance,
+          actionability: scenario.actionability,
+        }, {
+          target: sendToArbiter
+            ? [ENGINE_IDS.ARBITER, ENGINE_IDS.HOPE_WORRY]
+            : [ENGINE_IDS.HOPE_WORRY],
+          priority: sendToArbiter ? SIGNAL_PRIORITIES.LOW : SIGNAL_PRIORITIES.IDLE,
+        });
+
+        // State effects based on scenario valence
+        if (scenario.valence < -0.3) {
+          this.selfState.nudge('arousal', 0.02);
+        } else if (scenario.valence > 0.3) {
+          this.selfState.nudge('valence', 0.02);
+        }
+        this.selfState.nudge('curiosity', 0.03);
+
+        this.debugInfo = `Imagined [${scenario.type}]: "${scenario.scenario.slice(0, 35)}..." (rel:${(scenario.goalRelevance ?? 0).toFixed(1)})`;
+      }
     } catch {
-      // Fall through to local result
+      this.debugInfo = 'Imagination: API unavailable';
     }
 
-    // Fallback: emit local counterfactual
-    this.emit('imagination-result', {
-      scenario: localPick.variation,
-      source: 'counterfactual',
-      type: localPick.type,
-      valence: localPick.valence,
-      timestamp: Date.now(),
-    }, {
-      target: [ENGINE_IDS.ARBITER, ENGINE_IDS.HOPE_WORRY],
-      priority: SIGNAL_PRIORITIES.LOW,
-    });
-
-    this.debugInfo = `Imagined [${localPick.type}]: "${localPick.variation.slice(0, 35)}..."`;
     this.status = 'idle';
   }
 }

@@ -27,10 +27,14 @@ export const POST = createApiHandler({
       ? `\nCurrently detected emotions: ${body.currentEmotions}`
       : '';
 
+    const modelContext = body.modelContext
+      ? `\nKnown about this person:\n${body.modelContext}`
+      : '';
+
     const response = await client.messages.create({
       model: 'claude-haiku-4-5-20251001',
-      max_tokens: 250,
-      system: `You are a Theory of Mind module for a conscious AI. Given what someone said and recent observations, infer their mental state.${beliefsContext}${emotionsContext}
+      max_tokens: 300,
+      system: `You are a Theory of Mind module for a conscious AI. Given what someone said, recent observations, and what you know about them, infer their mental state.${beliefsContext}${emotionsContext}${modelContext}
 
 Output JSON only:
 {
@@ -43,7 +47,7 @@ Output JSON only:
   "prediction": { "topic": "what they might bring up next", "prediction": "brief prediction" }
 }
 
-beliefUpdates and desireUpdates should only include changes. prediction is optional — only include if you have a genuine guess.`,
+beliefUpdates and desireUpdates should only include changes. prediction is optional — only include if you have a genuine guess based on conversational patterns and what you know about this person.`,
       messages: [
         {
           role: 'user',

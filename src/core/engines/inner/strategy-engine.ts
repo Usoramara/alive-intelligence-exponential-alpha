@@ -2,15 +2,21 @@ import { Engine } from '../../engine';
 import { ENGINE_IDS, SIGNAL_PRIORITIES } from '../../constants';
 import type { Signal, SignalType } from '../../types';
 import { isSignal } from '../../types';
+import {
+  embed,
+  isEmbeddingReady,
+  cosineSimilarity,
+} from '../../embeddings';
 
 interface Goal {
   id: string;
   description: string;
   priority: number;
   progress: number;
-  source: 'initial' | 'growth' | 'discourse';
+  source: 'initial' | 'growth' | 'discourse' | 'inferred';
   createdAt: number;
   completedAt?: number;
+  embedding?: number[];
 }
 
 let goalCounter = 0;
@@ -22,49 +28,66 @@ export class StrategyEngine extends Engine {
   ];
   private readonly MAX_ACTIVE_GOALS = 5;
 
+  // T1: Periodic strategic review
+  private lastStrategicReview = 0;
+  private strategicReviewCooldown = 30000; // 30s between reviews
+  private isFetchingReview = false;
+
+  // Pre-embed initial goals
+  private goalsEmbedded = false;
+
   constructor() {
     super(ENGINE_IDS.STRATEGY);
+    this.embedGoals();
+  }
+
+  private async embedGoals(): Promise<void> {
+    for (const goal of this.goals) {
+      if (!goal.embedding) {
+        const emb = await embed(goal.description);
+        if (emb) goal.embedding = emb;
+      }
+    }
+    this.goalsEmbedded = true;
   }
 
   protected subscribesTo(): SignalType[] {
-    return ['perspective-update', 'hope-worry-update', 'growth-insight', 'discourse-state'];
+    return ['perspective-update', 'hope-worry-update', 'growth-insight', 'discourse-state', 'bound-representation'];
   }
 
   protected process(signals: Signal[]): void {
     for (const signal of signals) {
       if (isSignal(signal, 'perspective-update')) {
         const perspective = signal.payload;
-        const trustGoal = this.goals.find(g => g.description.includes('trust'));
-        if (trustGoal && perspective.theyThinkOfMe === 'positive and engaged') {
-          trustGoal.progress = Math.min(1, trustGoal.progress + 0.02);
-        }
+        // Semantic goal progress: check if perspective aligns with trust goal
+        this.updateGoalProgressSemantic(
+          `Person thinks of me as ${perspective.theyThinkOfMe}, relationship is ${perspective.relationship}`,
+        );
       }
 
       if (isSignal(signal, 'growth-insight')) {
         const insight = signal.payload;
-        // Generate new goal from growth insight if we have room
         if (insight.area && this.getActiveGoals().length < this.MAX_ACTIVE_GOALS) {
-          this.addGoalIfNew(`Develop ${insight.area}`, 0.6, 'growth');
+          this.addGoalSemantic(`Develop ${insight.area}`, 0.6, 'growth');
         }
-        // Progress existing goals matching the insight area
-        for (const goal of this.goals) {
-          if (insight.area && goal.description.toLowerCase().includes(insight.area.toLowerCase())) {
-            goal.progress = Math.min(1, goal.progress + 0.03);
-          }
+        if (insight.area) {
+          this.updateGoalProgressSemantic(`Made progress in ${insight.area}`);
         }
       }
 
       if (isSignal(signal, 'discourse-state')) {
         const discourse = signal.payload;
-        // Track commitment fulfillment as goal progress
         for (const commitment of discourse.commitments) {
-          const matchingGoal = this.goals.find(g =>
-            g.source === 'discourse' && g.description.includes(commitment.slice(0, 20))
-          );
-          if (!matchingGoal && this.getActiveGoals().length < this.MAX_ACTIVE_GOALS) {
-            this.addGoalIfNew(`Follow through: ${commitment.slice(0, 40)}`, 0.7, 'discourse');
+          if (this.getActiveGoals().length < this.MAX_ACTIVE_GOALS) {
+            this.addGoalSemantic(`Follow through: ${commitment.slice(0, 40)}`, 0.7, 'discourse');
           }
         }
+      }
+
+      if (isSignal(signal, 'bound-representation')) {
+        const bound = signal.payload;
+        // Track conversation content for semantic goal alignment
+        this.updateGoalProgressSemantic(bound.content);
       }
     }
 
@@ -85,13 +108,19 @@ export class StrategyEngine extends Engine {
       }
     }
 
+    // T1: Periodic strategic review
+    const now = Date.now();
+    if (now - this.lastStrategicReview > this.strategicReviewCooldown) {
+      this.strategicReview();
+    }
+
     // Emit strategy update
     const activeGoals = this.getActiveGoals();
     if (activeGoals.length > 0) {
       this.emit('strategy-update', {
         goals: activeGoals,
         currentPriority: activeGoals.reduce((best, g) =>
-          g.priority * (1 - g.progress) > best.priority * (1 - best.progress) ? g : best
+          g.priority * (1 - g.progress) > best.priority * (1 - best.progress) ? g : best,
         ),
       }, {
         target: [ENGINE_IDS.ARBITER, ENGINE_IDS.HOPE_WORRY],
@@ -103,12 +132,69 @@ export class StrategyEngine extends Engine {
     this.status = 'idle';
   }
 
-  private getActiveGoals(): Goal[] {
-    return this.goals.filter(g => !g.completedAt);
+  /**
+   * Semantic goal progress tracking.
+   * Instead of word matching, uses embedding similarity to determine if
+   * current context aligns with goal outcomes.
+   */
+  private async updateGoalProgressSemantic(context: string): Promise<void> {
+    if (!isEmbeddingReady()) return;
+
+    const contextEmb = await embed(context);
+    if (!contextEmb) return;
+
+    for (const goal of this.getActiveGoals()) {
+      if (!goal.embedding) {
+        const emb = await embed(goal.description);
+        if (emb) goal.embedding = emb;
+        else continue;
+      }
+
+      const similarity = cosineSimilarity(contextEmb, goal.embedding);
+      // Progress proportional to semantic alignment
+      if (similarity > 0.4) {
+        const progressDelta = (similarity - 0.4) * 0.05; // 0-3% progress per aligned signal
+        goal.progress = Math.min(1, goal.progress + progressDelta);
+      }
+    }
   }
 
-  private addGoalIfNew(description: string, priority: number, source: Goal['source']): void {
-    // Check for content overlap with existing goals
+  /**
+   * Add a goal with semantic deduplication.
+   * Uses embedding similarity instead of word overlap to detect duplicates.
+   */
+  private async addGoalSemantic(description: string, priority: number, source: Goal['source']): Promise<void> {
+    if (!isEmbeddingReady()) {
+      // Fallback: simple add with word-based dedup
+      this.addGoalFallback(description, priority, source);
+      return;
+    }
+
+    const newEmb = await embed(description);
+    if (!newEmb) {
+      this.addGoalFallback(description, priority, source);
+      return;
+    }
+
+    // Check for semantic duplicates
+    for (const goal of this.goals) {
+      if (!goal.embedding) continue;
+      const similarity = cosineSimilarity(newEmb, goal.embedding);
+      if (similarity > 0.7) return; // Too similar to existing goal
+    }
+
+    this.goals.push({
+      id: `g${++goalCounter}`,
+      description,
+      priority,
+      progress: 0,
+      source,
+      createdAt: Date.now(),
+      embedding: newEmb,
+    });
+  }
+
+  private addGoalFallback(description: string, priority: number, source: Goal['source']): void {
     const descLower = description.toLowerCase();
     const isDuplicate = this.goals.some(g => {
       const gLower = g.description.toLowerCase();
@@ -127,5 +213,60 @@ export class StrategyEngine extends Engine {
         createdAt: Date.now(),
       });
     }
+  }
+
+  /**
+   * T1: Periodic strategic review via Haiku.
+   * Reviews goal relevance and generates strategic pivots.
+   */
+  private async strategicReview(): Promise<void> {
+    if (this.isFetchingReview) return;
+
+    this.lastStrategicReview = Date.now();
+    this.isFetchingReview = true;
+
+    try {
+      const activeGoals = this.getActiveGoals();
+      if (activeGoals.length === 0) return;
+
+      const goalSummary = activeGoals
+        .map(g => `- ${g.description} (${(g.progress * 100).toFixed(0)}% done, priority: ${g.priority.toFixed(1)})`)
+        .join('\n');
+
+      const response = await fetch('/api/mind/reflect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          memories: [],
+          mood: this.selfState.get(),
+          count: 1,
+          context: `STRATEGIC REVIEW:\nCurrent goals:\n${goalSummary}\n\nAre these goals still relevant? Should any be adjusted or deprioritized? What strategic insight emerges?`,
+          flavorHints: ['reflection'],
+        }),
+      });
+
+      if (!response.ok) return;
+
+      const data = await response.json() as { thought?: string; thoughts?: Array<{ text: string }> };
+      const insight = data.thought ?? data.thoughts?.[0]?.text;
+
+      if (insight) {
+        this.selfState.pushStream({
+          text: insight,
+          source: 'strategy',
+          flavor: 'reflection',
+          timestamp: Date.now(),
+          intensity: 0.4,
+        });
+      }
+    } catch {
+      // Non-critical
+    } finally {
+      this.isFetchingReview = false;
+    }
+  }
+
+  private getActiveGoals(): Goal[] {
+    return this.goals.filter(g => !g.completedAt);
   }
 }

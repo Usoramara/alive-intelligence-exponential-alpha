@@ -108,15 +108,22 @@ export const tomRequestSchema = z.object({
   recentObservations: z.string().max(10_000),
   currentEmotions: z.string().max(2_000).optional(),
   existingBeliefs: z.record(z.string(), z.string().max(2_000)).optional(),
+  modelContext: z.string().max(5_000).optional(),
 });
 
 export const imagineRequestSchema = z.object({
   premise: z.string().min(1).max(10_000),
+  selfState: selfStateSchema,
+  // Legacy template-based fields (optional for backward compat)
   variations: z.array(z.object({
     type: z.string().max(500),
     variation: z.string().max(5_000),
-  })).max(20),
-  selfState: selfStateSchema,
+  })).max(20).optional(),
+  // New grounded imagination fields
+  grounded: z.boolean().optional(),
+  conversationContext: z.string().max(10_000).optional(),
+  useDeepReasoning: z.boolean().optional(),
+  memories: z.array(z.string().max(5_000)).max(10).optional(),
 });
 
 export const reflectParamsSchema = z.object({
@@ -129,6 +136,8 @@ export const reflectParamsSchema = z.object({
   recentStream: z.string().max(20_000).optional(),
   count: z.number().int().min(1).max(12).optional(),
   flavorHints: z.array(z.string().max(100)).max(10).optional(),
+  // New: contextual grounding for richer thought generation
+  context: z.string().max(20_000).optional(),
 });
 
 // ── Body HAL schemas ──

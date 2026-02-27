@@ -5,6 +5,7 @@ import { CognitiveLoop } from '@/core/cognitive-loop';
 import { ThoughtBridge } from '@/core/thought-bridge';
 import { BodyBridge } from '@/core/body-bridge';
 import { ENGINE_IDS } from '@/core/constants';
+import { initEmbeddings } from '@/core/embeddings';
 
 // Phase 2 — Outer
 import { TextInputEngine } from '@/core/engines/outer/text-input-engine';
@@ -131,6 +132,11 @@ export function MindProvider({ children, conversationId }: { children: ReactNode
     // Restore persisted state
     const persistence = loop.getEngine<PersistenceEngine>(ENGINE_IDS.PERSISTENCE);
     persistence?.restore();
+
+    // Warm up the embedding model for T0 cognitive operations
+    initEmbeddings().catch(() => {
+      // Embedding model failed to load — engines will fall back gracefully
+    });
 
     loop.start();
 
