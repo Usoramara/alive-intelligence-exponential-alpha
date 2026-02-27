@@ -100,6 +100,37 @@ export interface SignalPayloadMap {
   'metacognition-update': { uncertainty: number; processingLoad: number; emotionalRegulation: string | null; coherence: number };
   'metacognition-reflection': { reflection: string; adjustments: string[]; timestamp: number };
 
+  // Vocal/visual perception signals
+  'vocal-emotion': {
+    speechRate: number; // words per second (estimated)
+    pauseRatio: number; // ratio of pauses to speech (0-1)
+    confidencePattern: 'steady' | 'declining' | 'fluctuating';
+    inferredTone: 'calm' | 'anxious' | 'energetic' | 'flat' | 'warm' | 'tense';
+    confidence: number;
+  };
+  'visual-emotion': {
+    emotions: string[];
+    valence: number;
+    arousal: number;
+    confidence: number;
+    people: Array<{ expression: string; estimatedMood: string }>;
+    sceneContext: string;
+  };
+  'tone-text-mismatch': {
+    textEmotion: string;
+    vocalTone: string;
+    mismatchType: 'suppression' | 'sarcasm' | 'masking';
+    confidence: number;
+    interpretation: string;
+  };
+  'environmental-context': {
+    timeOfDay: 'morning' | 'afternoon' | 'evening' | 'night';
+    dayOfWeek: string;
+    sessionDuration: number; // seconds
+    localHour: number;
+    greeting: string | null; // contextual greeting suggestion
+  };
+
   // Emotion trajectory signals
   'emotion-trajectory': {
     pattern: 'spiraling-down' | 'spiraling-up' | 'stabilizing' | 'oscillating' | 'neutral';

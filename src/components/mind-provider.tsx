@@ -54,6 +54,8 @@ import { ExpressionEngine } from '@/core/engines/body/expression-engine';
 import { LocomotionEngine } from '@/core/engines/body/locomotion-engine';
 import { BodyGatewayEngine } from '@/core/engines/body/body-gateway-engine';
 import { SyncEngine } from '@/core/engines/thalamus/sync-engine';
+// Perceptual Richness — Environmental Awareness
+import { EnvironmentEngine } from '@/core/engines/outer/environment-engine';
 
 export const MindContext = createContext<CognitiveLoop | null>(null);
 export const ConversationIdContext = createContext<string | undefined>(undefined);
@@ -120,6 +122,9 @@ export function MindProvider({ children, conversationId }: { children: ReactNode
     loop.registerEngine(new LocomotionEngine());
     loop.registerEngine(new BodyGatewayEngine());
     loop.registerEngine(new SyncEngine());
+
+    // Perceptual Richness — Environmental Awareness
+    loop.registerEngine(new EnvironmentEngine());
 
     loopRef.current = loop;
   }

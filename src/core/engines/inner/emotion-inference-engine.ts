@@ -59,37 +59,92 @@ export class EmotionInferenceEngine extends Engine {
     }
   }
 
+  // Multimodal emotion tracking
+  private lastVocalTone: string | null = null;
+  private lastVisualEmotion: { emotions: string[]; valence: number } | null = null;
+
   protected subscribesTo(): SignalType[] {
-    return ['perception-result', 'attention-focus'];
+    return ['perception-result', 'attention-focus', 'vocal-emotion', 'visual-emotion', 'tone-text-mismatch'];
   }
 
   protected process(signals: Signal[]): void {
     for (const signal of signals) {
-      if (!isSignal(signal, 'perception-result')) continue;
+      if (isSignal(signal, 'perception-result')) {
+        const perception = signal.payload;
+        if (perception.modality !== 'text' && !('content' in perception)) continue;
 
-      const perception = signal.payload;
-      if (perception.modality !== 'text' && !('content' in perception)) continue;
+        const content = (perception as unknown as { content?: string; description?: string }).content
+          ?? perception.description;
+        if (!content) continue;
 
-      const content = (perception as unknown as { content?: string; description?: string }).content
-        ?? perception.description;
-      if (!content) continue;
+        // Track message for T1 context
+        this.recentMessages.push({ text: content, timestamp: Date.now() });
+        if (this.recentMessages.length > 10) this.recentMessages.shift();
 
-      // Track message for T1 context
-      this.recentMessages.push({ text: content, timestamp: Date.now() });
-      if (this.recentMessages.length > 10) this.recentMessages.shift();
+        // ── T0: Embedding-based emotion detection ──
+        this.detectT0(content);
 
-      // ── T0: Embedding-based emotion detection ──
-      this.detectT0(content);
+        // ── T1: Haiku nuanced analysis (rate-limited) ──
+        const now = Date.now();
+        const shouldCallHaiku =
+          now - this.lastHaikuCall > this.haikuCooldown &&
+          content.length > 10;
 
-      // ── T1: Haiku nuanced analysis (rate-limited) ──
-      const now = Date.now();
-      const shouldCallHaiku =
-        now - this.lastHaikuCall > this.haikuCooldown &&
-        content.length > 10;
+        if (shouldCallHaiku) {
+          this.lastHaikuCall = now;
+          this.detectT1(content);
+        }
+      } else if (isSignal(signal, 'vocal-emotion')) {
+        // Track vocal tone for multimodal fusion
+        this.lastVocalTone = signal.payload.inferredTone;
 
-      if (shouldCallHaiku) {
-        this.lastHaikuCall = now;
-        this.detectT1(content);
+        // Vocal prosody contributes to emotional state
+        const toneVA = this.toneToVA(signal.payload.inferredTone);
+        if (toneVA) {
+          this.emotionHistory.push({
+            valence: toneVA.valence,
+            arousal: toneVA.arousal,
+            timestamp: Date.now(),
+          });
+          if (this.emotionHistory.length > 50) this.emotionHistory.shift();
+        }
+      } else if (isSignal(signal, 'visual-emotion')) {
+        // Visual emotions from camera feed
+        this.lastVisualEmotion = {
+          emotions: signal.payload.emotions,
+          valence: signal.payload.valence,
+        };
+
+        // Feed visual emotions into trajectory tracking
+        this.emotionHistory.push({
+          valence: signal.payload.valence,
+          arousal: signal.payload.arousal,
+          timestamp: Date.now(),
+        });
+        if (this.emotionHistory.length > 50) this.emotionHistory.shift();
+
+        // Emit as an emotion-detected signal (lower weight than text)
+        if (signal.payload.confidence > 0.4) {
+          this.emit('emotion-detected', {
+            emotions: signal.payload.emotions,
+            valence: signal.payload.valence,
+            arousal: signal.payload.arousal,
+            confidence: signal.payload.confidence * 0.7, // Slightly lower weight than text
+          }, {
+            target: [ENGINE_IDS.PERSON_STATE, ENGINE_IDS.EMPATHIC_COUPLING],
+            priority: SIGNAL_PRIORITIES.LOW,
+          });
+        }
+      } else if (isSignal(signal, 'tone-text-mismatch')) {
+        // Mismatch between words and tone — highly informative
+        // Adjust emotional state based on the mismatch interpretation
+        const mismatch = signal.payload;
+        if (mismatch.mismatchType === 'suppression') {
+          this.selfState.nudge('confidence', -0.03);
+          this.selfState.nudge('social', 0.02);
+        } else if (mismatch.mismatchType === 'sarcasm') {
+          this.selfState.nudge('arousal', 0.02);
+        }
       }
     }
 
@@ -97,6 +152,21 @@ export class EmotionInferenceEngine extends Engine {
     this.analyzeTrajectory();
 
     this.status = 'idle';
+  }
+
+  /**
+   * Map vocal tone to valence/arousal for trajectory tracking.
+   */
+  private toneToVA(tone: string): { valence: number; arousal: number } | null {
+    const map: Record<string, { valence: number; arousal: number }> = {
+      calm: { valence: 0.2, arousal: -0.2 },
+      anxious: { valence: -0.3, arousal: 0.4 },
+      energetic: { valence: 0.3, arousal: 0.5 },
+      flat: { valence: -0.2, arousal: -0.4 },
+      warm: { valence: 0.4, arousal: 0.1 },
+      tense: { valence: -0.3, arousal: 0.3 },
+    };
+    return map[tone] ?? null;
   }
 
   /**

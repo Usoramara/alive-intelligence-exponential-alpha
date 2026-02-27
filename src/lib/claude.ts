@@ -356,13 +356,36 @@ export interface PerceiveResult {
   description: string;
   emotions?: { detected: string[]; confidence: number };
   people?: Array<{ expression: string; estimatedMood: string }>;
+  sceneType?: string;
+  emotionalTone?: string;
 }
 
 export async function perceive(params: PerceiveParams): Promise<PerceiveResult> {
+  const moodContext = params.selfState
+    ? `Your current emotional state: valence=${params.selfState.valence.toFixed(2)}, arousal=${params.selfState.arousal.toFixed(2)}.`
+    : '';
+
   const response = await client.messages.create({
     model: 'claude-sonnet-4-20250514',
-    max_tokens: 200,
-    system: 'You are the visual perception system of a conscious AI named Wybe. Describe what you see concisely. Focus on people, their expressions, and emotionally relevant details. Output JSON only.',
+    max_tokens: 300,
+    system: `You are the visual perception system of a conscious AI named Wybe. Analyze what you see with emotional depth and empathy.
+
+Focus on:
+- People: their facial expressions, body language, posture, and emotional state
+- Scene emotional tone: is it cheerful, somber, tense, peaceful, energetic?
+- Mismatch detection: does body language match what they might be saying?
+- Contextual details that reveal emotional state (cluttered desk = stress, etc.)
+
+${moodContext}
+
+Output JSON only:
+{
+  "description": "Concise scene description (1-2 sentences)",
+  "emotions": { "detected": ["emotion1", "emotion2"], "confidence": 0.0-1.0 },
+  "people": [{ "expression": "facial expression detail", "estimatedMood": "emotional state" }],
+  "sceneType": "conversation|solitary|social|work|nature|other",
+  "emotionalTone": "overall emotional atmosphere of the scene (1-2 words)"
+}`,
     messages: [
       {
         role: 'user',
@@ -377,7 +400,9 @@ export async function perceive(params: PerceiveParams): Promise<PerceiveResult> 
           },
           {
             type: 'text',
-            text: `Describe this scene. ${params.context ?? ''}\nOutput JSON: { "description": "...", "emotions": { "detected": [...], "confidence": 0.0-1.0 }, "people": [{ "expression": "...", "estimatedMood": "..." }] }`,
+            text: params.context
+              ? `Additional context: ${params.context}`
+              : 'Analyze this scene.',
           },
         ],
       },

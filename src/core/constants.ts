@@ -11,6 +11,7 @@ export const ENGINE_IDS = {
   PERCEPTION: 'perception',
   MOTOR: 'motor',
   MEMORY: 'memory',
+  ENVIRONMENT: 'environment',
 
   // Inner (Right hemisphere — emotion & simulation)
   EMOTION_INFERENCE: 'emotion-inference',
@@ -70,6 +71,7 @@ export const TICK_RATES: Record<EngineId, number> = {
   [ENGINE_IDS.PERCEPTION]: 50,       // Process sensor data (critical path — low latency)
   [ENGINE_IDS.MOTOR]: 100,           // Action planning
   [ENGINE_IDS.MEMORY]: 500,          // Retrieval
+  [ENGINE_IDS.ENVIRONMENT]: 60000,   // Environmental context (every minute)
 
   // Inner — slower, reflective
   [ENGINE_IDS.EMOTION_INFERENCE]: 500,
@@ -116,6 +118,7 @@ export const ENGINE_ZONES: Record<EngineId, Zone> = {
   [ENGINE_IDS.PERCEPTION]: 'outer',
   [ENGINE_IDS.MOTOR]: 'outer',
   [ENGINE_IDS.MEMORY]: 'outer',
+  [ENGINE_IDS.ENVIRONMENT]: 'outer',
 
   [ENGINE_IDS.EMOTION_INFERENCE]: 'inner',
   [ENGINE_IDS.PERSON_STATE]: 'inner',
@@ -159,6 +162,7 @@ export const ENGINE_NAMES: Record<EngineId, string> = {
   [ENGINE_IDS.PERCEPTION]: 'Perception',
   [ENGINE_IDS.MOTOR]: 'Motor',
   [ENGINE_IDS.MEMORY]: 'Hippocampus',
+  [ENGINE_IDS.ENVIRONMENT]: 'Environment',
 
   [ENGINE_IDS.EMOTION_INFERENCE]: 'Emotion Inference',
   [ENGINE_IDS.PERSON_STATE]: 'Person State',
@@ -231,6 +235,7 @@ export const ENGINE_POSITIONS: Record<EngineId, { x: number; y: number }> = {
   [ENGINE_IDS.PERCEPTION]:   { x: 0.22, y: 0.35 },
   [ENGINE_IDS.MOTOR]:        { x: 0.22, y: 0.60 },
   [ENGINE_IDS.MEMORY]:       { x: 0.22, y: 0.80 },
+  [ENGINE_IDS.ENVIRONMENT]:  { x: 0.15, y: 0.70 },
 
   // Inner — right side
   [ENGINE_IDS.EMOTION_INFERENCE]:  { x: 0.78, y: 0.15 },
@@ -387,6 +392,10 @@ export const SIGNAL_PATHS: Array<[EngineId, EngineId]> = [
   ['body-gateway', 'expression'],
   ['body-gateway', 'voice'],
   ['body-gateway', 'locomotion'],
+
+  // Environment — contextual awareness
+  ['environment', 'arbiter'],
+  ['environment', 'default-mode'],
 
   // Consciousness stream — self-loop for thought chaining
   ['default-mode', 'default-mode'],

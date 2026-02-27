@@ -69,6 +69,11 @@ export type SignalType =
   // Metacognition signals
   | 'metacognition-update'
   | 'metacognition-reflection'
+  // Vocal/visual perception signals
+  | 'vocal-emotion'
+  | 'visual-emotion'
+  | 'tone-text-mismatch'
+  | 'environmental-context'
   // Emotion trajectory signals
   | 'emotion-trajectory'
   // Resource management signals
