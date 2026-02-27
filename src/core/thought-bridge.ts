@@ -120,6 +120,7 @@ export class ThoughtBridge {
     workingMemorySummary?: unknown;
     discourseContext?: unknown;
     metacognitionContext?: unknown;
+    behavioralPreferences?: unknown;
   }): Promise<void> {
     const body = {
       content: decision.content,
@@ -136,6 +137,7 @@ export class ThoughtBridge {
       workingMemorySummary: decision.workingMemorySummary,
       discourseContext: decision.discourseContext,
       metacognitionContext: decision.metacognitionContext,
+      behavioralPreferences: decision.behavioralPreferences,
     };
 
     const response = await fetch('/api/mind/think-stream', {

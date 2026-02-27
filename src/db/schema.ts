@@ -188,6 +188,48 @@ export const pendingInsights = pgTable(
   (t) => [index('pending_insights_user_idx').on(t.userId)],
 );
 
+// ── Behavioral Preferences (learned response style preferences per person) ──
+
+export const behavioralPreferences = pgTable(
+  'behavioral_preferences',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    // Learned response style preferences
+    preferredLength: real('preferred_length').notNull().default(0.5), // 0=terse, 1=verbose
+    mirroringIntensity: real('mirroring_intensity').notNull().default(0.5), // 0=minimal, 1=high
+    humorFrequency: real('humor_frequency').notNull().default(0.3), // 0=serious, 1=playful
+    warmthLevel: real('warmth_level').notNull().default(0.5), // 0=formal, 1=warm
+    directness: real('directness').notNull().default(0.5), // 0=indirect, 1=direct
+    // Tracking
+    sampleCount: integer('sample_count').notNull().default(0),
+    lastUpdatedAt: timestamp('last_updated_at').defaultNow().notNull(),
+  },
+  (t) => [uniqueIndex('behavioral_pref_user_idx').on(t.userId)],
+);
+
+// ── Value Decisions (logged value-aligned decisions for evolution) ──
+
+export const valueDecisions = pgTable(
+  'value_decisions',
+  {
+    id: uuid('id').defaultRandom().primaryKey(),
+    userId: text('user_id')
+      .notNull()
+      .references(() => users.id, { onDelete: 'cascade' }),
+    value: text('value').notNull(), // which value cluster
+    decision: text('decision').notNull(), // what decision was made
+    context: text('context').notNull(), // what triggered it
+    outcome: text('outcome'), // what happened after (filled later)
+    severity: real('severity').notNull().default(0.5),
+    wasOverridden: boolean('was_overridden').default(false), // did the user push through?
+    createdAt: timestamp('created_at').defaultNow().notNull(),
+  },
+  (t) => [index('value_decisions_user_idx').on(t.userId)],
+);
+
 // ── Channel Conversations (persistent channel history) ──
 
 export const channelConversations = pgTable(

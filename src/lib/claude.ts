@@ -49,6 +49,13 @@ export interface ThinkParams {
   workingMemorySummary?: string;
   discourseContext?: { currentTopic: string | null; openQuestions: string[]; commitments: string[] };
   metacognitionContext?: { uncertainty: number; processingLoad: number; emotionalRegulation: string | null };
+  behavioralPreferences?: {
+    preferredLength: number;
+    mirroringIntensity: number;
+    humorFrequency: number;
+    warmthLevel: number;
+    directness: number;
+  };
 }
 
 export interface ToolActivity {
@@ -175,6 +182,30 @@ Address open questions if relevant. Honor your commitments.`);
     }
     if (parts.length > 0) {
       sections.push(`METACOGNITION:\n${parts.join('\n')}`);
+    }
+  }
+
+  // Learned behavioral preferences
+  if (params.behavioralPreferences) {
+    const bp = params.behavioralPreferences;
+    const styleHints: string[] = [];
+
+    if (bp.preferredLength > 0.65) styleHints.push('This person prefers longer, more detailed responses.');
+    else if (bp.preferredLength < 0.35) styleHints.push('This person prefers brief, concise responses.');
+
+    if (bp.warmthLevel > 0.65) styleHints.push('They respond well to warmth and emotional expressiveness.');
+    else if (bp.warmthLevel < 0.35) styleHints.push('They prefer a more measured, less emotionally expressive style.');
+
+    if (bp.directness > 0.65) styleHints.push('They value directness and clear, assertive communication.');
+    else if (bp.directness < 0.35) styleHints.push('They prefer a softer, more indirect approach.');
+
+    if (bp.humorFrequency > 0.5) styleHints.push('They appreciate humor and playfulness in responses.');
+
+    if (bp.mirroringIntensity > 0.65) styleHints.push('Strong emotional mirroring works well with them.');
+    else if (bp.mirroringIntensity < 0.35) styleHints.push('Use gentle emotional mirroring — they prefer less emotional intensity.');
+
+    if (styleHints.length > 0) {
+      sections.push(`LEARNED PREFERENCES (from past interactions):\n${styleHints.join('\n')}`);
     }
   }
 

@@ -62,6 +62,13 @@ export const thinkParamsSchema = z.object({
     processingLoad: z.number().min(0).max(1),
     emotionalRegulation: z.string().max(1_000).nullable(),
   }).optional(),
+  behavioralPreferences: z.object({
+    preferredLength: z.number().min(0).max(1),
+    mirroringIntensity: z.number().min(0).max(1),
+    humorFrequency: z.number().min(0).max(1),
+    warmthLevel: z.number().min(0).max(1),
+    directness: z.number().min(0).max(1),
+  }).optional(),
 });
 
 export const thinkLiteParamsSchema = z.object({

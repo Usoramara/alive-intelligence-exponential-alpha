@@ -131,6 +131,35 @@ export interface SignalPayloadMap {
     greeting: string | null; // contextual greeting suggestion
   };
 
+  // Behavioral learning signals
+  'behavioral-preference': {
+    preferredLength: number; // 0=terse, 1=verbose
+    mirroringIntensity: number; // 0=minimal, 1=high
+    humorFrequency: number; // 0=serious, 1=playful
+    warmthLevel: number; // 0=formal, 1=warm
+    directness: number; // 0=indirect, 1=direct
+    sampleCount: number;
+  };
+  'response-feedback': {
+    responseText: string;
+    responseStyle: { length: number; mirroring: number; humor: number; warmth: number; directness: number };
+    userSentiment: number; // -1 to 1 inferred from follow-up
+    confidence: number;
+  };
+  'value-decision-log': {
+    value: string;
+    decision: string;
+    context: string;
+    severity: number;
+  };
+  'self-assessment': {
+    period: 'conversation' | 'daily' | 'weekly';
+    strengths: string[];
+    growthAreas: string[];
+    keyInsight: string;
+    relationshipProgress: string;
+  };
+
   // Emotion trajectory signals
   'emotion-trajectory': {
     pattern: 'spiraling-down' | 'spiraling-up' | 'stabilizing' | 'oscillating' | 'neutral';

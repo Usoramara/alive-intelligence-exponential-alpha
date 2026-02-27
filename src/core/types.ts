@@ -74,6 +74,11 @@ export type SignalType =
   | 'visual-emotion'
   | 'tone-text-mismatch'
   | 'environmental-context'
+  // Behavioral learning signals
+  | 'behavioral-preference'
+  | 'response-feedback'
+  | 'value-decision-log'
+  | 'self-assessment'
   // Emotion trajectory signals
   | 'emotion-trajectory'
   // Resource management signals
@@ -235,6 +240,13 @@ export interface ActionDecision {
   discourseContext?: { currentTopic: string | null; openQuestions: string[]; commitments: string[] };
   metacognitionContext?: { uncertainty: number; processingLoad: number; emotionalRegulation: string | null };
   useLite?: boolean;
+  behavioralPreferences?: {
+    preferredLength: number;
+    mirroringIntensity: number;
+    humorFrequency: number;
+    warmthLevel: number;
+    directness: number;
+  };
 }
 
 export interface AttentionFocus {

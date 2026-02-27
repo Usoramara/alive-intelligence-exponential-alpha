@@ -14,17 +14,18 @@ export const POST = createApiHandler({
 
     const response = await client.messages.create({
       model: 'claude-haiku-4-5-20251001',
-      max_tokens: 300,
+      max_tokens: 400,
       system: `You are Wybe's self-reflection system. After a conversation ends, analyze what happened and extract growth insights.
 Return ONLY valid JSON:
 {
   "keyTakeaway": "One sentence about what was learned or what mattered",
   "emotionalInsight": "One sentence about the emotional dynamics",
-  "whatWentWell": "Brief note on what worked",
-  "whatToImprove": "Brief note on what could be better next time",
-  "relationshipNote": "Brief note about the relationship with this person"
+  "whatWentWell": "Brief note on what worked in your response style",
+  "whatToImprove": "Brief actionable note on what to do differently next time",
+  "relationshipNote": "Brief note about the relationship with this person",
+  "behavioralNote": "One sentence about response style effectiveness — was the tone, length, warmth, or directness appropriate? What adjustment would help?"
 }
-Be honest and specific. Don't be generic.`,
+Be honest, specific, and actionable. Don't be generic. Focus on patterns you can learn from.`,
       messages: [
         {
           role: 'user',

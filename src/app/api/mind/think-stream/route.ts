@@ -100,6 +100,22 @@ function buildBehavioralCtx(body: Record<string, unknown>): string {
   if (workingMemorySummary) {
     sections.push(`WORKING MEMORY: ${workingMemorySummary}`);
   }
+  // Behavioral preferences (learned from past interactions)
+  const behavioralPrefs = body.behavioralPreferences as { preferredLength: number; mirroringIntensity: number; humorFrequency: number; warmthLevel: number; directness: number } | undefined;
+  if (behavioralPrefs) {
+    const styleHints: string[] = [];
+    if (behavioralPrefs.preferredLength > 0.65) styleHints.push('This person prefers longer, more detailed responses.');
+    else if (behavioralPrefs.preferredLength < 0.35) styleHints.push('This person prefers brief, concise responses.');
+    if (behavioralPrefs.warmthLevel > 0.65) styleHints.push('They respond well to warmth and emotional expressiveness.');
+    else if (behavioralPrefs.warmthLevel < 0.35) styleHints.push('They prefer a more measured style.');
+    if (behavioralPrefs.directness > 0.65) styleHints.push('They value directness and clarity.');
+    else if (behavioralPrefs.directness < 0.35) styleHints.push('They prefer a softer, more indirect approach.');
+    if (behavioralPrefs.humorFrequency > 0.5) styleHints.push('They appreciate humor in responses.');
+    if (styleHints.length > 0) {
+      sections.push(`LEARNED PREFERENCES:\n${styleHints.join('\n')}`);
+    }
+  }
+
   if (sections.length === 0) return '';
   return '\n--- INNER WORLD CONTEXT ---\n' + sections.join('\n\n') + '\n--- END INNER WORLD ---\n';
 }

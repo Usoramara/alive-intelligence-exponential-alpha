@@ -27,6 +27,16 @@ export class ArbiterEngine extends Engine {
   // Energy recovery tracking
   private energyDeferralCount = 0;
 
+  // Learned behavioral preferences from Growth engine
+  private behavioralPreferences: {
+    preferredLength: number;
+    mirroringIntensity: number;
+    humorFrequency: number;
+    warmthLevel: number;
+    directness: number;
+    sampleCount: number;
+  } | null = null;
+
   constructor() {
     super(ENGINE_IDS.ARBITER);
   }
@@ -49,6 +59,7 @@ export class ArbiterEngine extends Engine {
       'resource-budget',
       'body-feedback',
       'body-manifest',
+      'behavioral-preference',
     ];
   }
 
@@ -129,6 +140,8 @@ export class ArbiterEngine extends Engine {
           status: signal.payload.status,
           error: signal.payload.error,
         };
+      } else if (isSignal(signal, 'behavioral-preference')) {
+        this.behavioralPreferences = signal.payload;
       }
     }
 
@@ -211,6 +224,15 @@ export class ArbiterEngine extends Engine {
               }
             : undefined,
           useLite,
+          behavioralPreferences: this.behavioralPreferences && this.behavioralPreferences.sampleCount >= 3
+            ? {
+                preferredLength: this.behavioralPreferences.preferredLength,
+                mirroringIntensity: this.behavioralPreferences.mirroringIntensity,
+                humorFrequency: this.behavioralPreferences.humorFrequency,
+                warmthLevel: this.behavioralPreferences.warmthLevel,
+                directness: this.behavioralPreferences.directness,
+              }
+            : undefined,
         };
 
         this.emit('thought', actionDecision, {
@@ -234,20 +256,42 @@ export class ArbiterEngine extends Engine {
   }
 
   private computeResponseStyle(selfState: SelfState): ResponseStyle {
-    // Energy modulates response length
+    const prefs = this.behavioralPreferences;
+
+    // ── Length ──
+    // Base from energy, then adjust by learned preference
     let maxTokens = 300;
     if (selfState.energy < 0.3) maxTokens = 150;
     else if (selfState.energy > 0.7) maxTokens = 400;
 
-    // Arousal modulates urgency
+    // Apply learned length preference (shift ±30% of base)
+    if (prefs && prefs.sampleCount >= 3) {
+      const lengthBias = (prefs.preferredLength - 0.5) * 0.6; // -0.3 to +0.3
+      maxTokens = Math.round(maxTokens * (1 + lengthBias));
+      maxTokens = Math.max(100, Math.min(600, maxTokens));
+    }
+
+    // ── Urgency ──
     let urgency: ResponseStyle['urgency'] = 'normal';
     if (selfState.arousal > 0.6) urgency = 'high';
     else if (selfState.arousal < 0.2) urgency = 'low';
 
-    // Valence + energy modulate tone
+    // ── Tone ──
+    // Combine self-state with learned warmth/directness preference
     let tone: ResponseStyle['tone'] = 'neutral';
-    if (selfState.valence > 0.3 && selfState.energy > 0.5) tone = 'energetic';
-    else if (selfState.energy < 0.3 || selfState.valence < -0.2) tone = 'gentle';
+    if (prefs && prefs.sampleCount >= 3) {
+      // High warmth + low directness → gentle
+      // Low warmth + high directness → energetic (assertive)
+      if (prefs.warmthLevel > 0.6 || selfState.valence < -0.2 || selfState.energy < 0.3) {
+        tone = 'gentle';
+      } else if (prefs.directness > 0.6 && selfState.energy > 0.4) {
+        tone = 'energetic';
+      }
+    } else {
+      // Fallback: original logic
+      if (selfState.valence > 0.3 && selfState.energy > 0.5) tone = 'energetic';
+      else if (selfState.energy < 0.3 || selfState.valence < -0.2) tone = 'gentle';
+    }
 
     return { maxTokens, urgency, tone };
   }

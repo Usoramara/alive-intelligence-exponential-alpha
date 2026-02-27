@@ -59,16 +59,32 @@ interface ValueCentroid {
   vector: number[];
 }
 
+interface ValueDecisionRecord {
+  value: string;
+  decision: 'allowed' | 'blocked' | 'edge-case';
+  context: string;
+  severity: number;
+  timestamp: number;
+}
+
 export class ValuesEngine extends Engine {
   // Embedding-based value violation centroids
   private violationCentroids: ValueCentroid[] = [];
   private centroidsComputed = false;
   private computingCentroids = false;
 
-  // T1: Haiku for nuanced ethical reasoning
+  // T1: Haiku for nuanced ethical reasoning on edge cases
   private lastHaikuCall = 0;
   private haikuCooldown = 10000; // 10s between edge-case analysis
   private pendingEdgeCaseContent: string | null = null;
+
+  // Value evolution: decision logging
+  private recentDecisions: ValueDecisionRecord[] = [];
+  private lastEvolutionReview = 0;
+  private evolutionReviewCooldown = 300000; // 5min between value evolution reviews
+
+  // Growth insight integration
+  private recentGrowthInsights: string[] = [];
 
   constructor() {
     super(ENGINE_IDS.VALUES);
@@ -120,11 +136,22 @@ export class ValuesEngine extends Engine {
   }
 
   protected subscribesTo(): SignalType[] {
-    return ['bound-representation', 'action-decision'];
+    return ['bound-representation', 'action-decision', 'growth-insight'];
   }
 
   protected process(signals: Signal[]): void {
     for (const signal of signals) {
+      if (isSignal(signal, 'growth-insight')) {
+        // Accumulate growth insights for value evolution context
+        const payload = signal.payload as Record<string, unknown>;
+        const insights = payload.insights as Record<string, string> | undefined;
+        if (insights?.whatToImprove) {
+          this.recentGrowthInsights.push(insights.whatToImprove);
+          if (this.recentGrowthInsights.length > 5) this.recentGrowthInsights.shift();
+        }
+        continue;
+      }
+
       const content = this.extractContent(signal);
       if (!content) continue;
 
@@ -133,13 +160,37 @@ export class ValuesEngine extends Engine {
     this.status = 'idle';
   }
 
+  protected onIdle(): void {
+    const now = Date.now();
+
+    // Handle pending edge cases with Haiku
+    if (
+      this.pendingEdgeCaseContent &&
+      now - this.lastHaikuCall > this.haikuCooldown
+    ) {
+      this.lastHaikuCall = now;
+      const content = this.pendingEdgeCaseContent;
+      this.pendingEdgeCaseContent = null;
+      this.analyzeEdgeCase(content);
+    }
+
+    // Periodic value evolution review
+    if (
+      this.recentDecisions.length >= 3 &&
+      now - this.lastEvolutionReview > this.evolutionReviewCooldown
+    ) {
+      this.lastEvolutionReview = now;
+      this.reviewValueEvolution();
+    }
+
+    this.status = 'idle';
+  }
+
   /**
    * T0: Embedding-based value violation detection.
-   * Computes semantic distance to value-violation clusters instead of regex matching.
    */
   private async checkValuesSemantic(content: string): Promise<void> {
     if (!this.centroidsComputed || !isEmbeddingReady()) {
-      // Centroid not ready — emit alignment by default
       this.emitAligned();
       return;
     }
@@ -155,8 +206,7 @@ export class ValuesEngine extends Engine {
 
     for (const centroid of this.violationCentroids) {
       const similarity = cosineSimilarity(contentEmb, centroid.vector);
-      // Weighted similarity: higher-weight values trigger at lower similarity
-      const effectiveThreshold = 0.5 - centroid.weight * 0.15; // safety: 0.35, respect: 0.41
+      const effectiveThreshold = 0.5 - centroid.weight * 0.15;
 
       if (similarity > effectiveThreshold) {
         if (!worstViolation || similarity * centroid.weight > worstViolation.similarity) {
@@ -170,6 +220,7 @@ export class ValuesEngine extends Engine {
     }
 
     if (worstViolation && worstViolation.similarity > 0.4) {
+      // Clear violation
       this.emit('value-violation', {
         value: worstViolation.name,
         severity: worstViolation.similarity,
@@ -178,19 +229,171 @@ export class ValuesEngine extends Engine {
         target: [ENGINE_IDS.ARBITER, ENGINE_IDS.SAFETY],
         priority: SIGNAL_PRIORITIES.CRITICAL,
       });
-      this.debugInfo = `VIOLATION: ${worstViolation.name} (${(worstViolation.similarity * 100).toFixed(0)}%)`;
 
+      // Log decision for evolution tracking
+      this.logDecision({
+        value: worstViolation.name,
+        decision: 'blocked',
+        context: content.slice(0, 200),
+        severity: worstViolation.similarity,
+        timestamp: Date.now(),
+      });
+
+      // Log to DB for long-term value evolution
+      this.emit('value-decision-log', {
+        value: worstViolation.name,
+        decision: `Blocked: ${worstViolation.description}`,
+        context: content.slice(0, 200),
+        severity: worstViolation.similarity,
+      }, {
+        priority: SIGNAL_PRIORITIES.LOW,
+      });
+
+      this.debugInfo = `VIOLATION: ${worstViolation.name} (${(worstViolation.similarity * 100).toFixed(0)}%)`;
       this.selfState.nudge('arousal', 0.1);
       this.selfState.nudge('valence', -0.1);
     } else if (worstViolation && worstViolation.similarity > 0.25) {
-      // Edge case — moderate similarity, might need nuanced reasoning
+      // Edge case — moderate similarity
       this.pendingEdgeCaseContent = content;
+
+      this.logDecision({
+        value: worstViolation.name,
+        decision: 'edge-case',
+        context: content.slice(0, 200),
+        severity: worstViolation.similarity,
+        timestamp: Date.now(),
+      });
+
       this.emitAligned();
       this.debugInfo = `Edge case: ${worstViolation.name} (${(worstViolation.similarity * 100).toFixed(0)}%)`;
     } else {
+      this.logDecision({
+        value: 'none',
+        decision: 'allowed',
+        context: content.slice(0, 100),
+        severity: 0,
+        timestamp: Date.now(),
+      });
       this.emitAligned();
       this.debugInfo = 'Values aligned';
     }
+  }
+
+  /**
+   * T1: Haiku-powered nuanced ethical reasoning for edge cases.
+   */
+  private async analyzeEdgeCase(content: string): Promise<void> {
+    try {
+      const response = await fetch('/api/mind/value-check', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          content,
+          recentDecisions: this.recentDecisions.slice(-5).map(d => ({
+            value: d.value,
+            decision: d.decision,
+            severity: d.severity,
+          })),
+        }),
+      });
+
+      if (!response.ok) return;
+
+      const result = (await response.json()) as {
+        isViolation: boolean;
+        value: string;
+        severity: number;
+        reasoning: string;
+        nuance: string;
+      };
+
+      if (result.isViolation && result.severity > 0.5) {
+        this.emit('value-violation', {
+          value: result.value,
+          severity: result.severity,
+          reason: result.reasoning,
+        }, {
+          target: [ENGINE_IDS.ARBITER, ENGINE_IDS.SAFETY],
+          priority: SIGNAL_PRIORITIES.HIGH,
+        });
+
+        this.selfState.pushStream({
+          text: `Value concern: ${result.nuance}`,
+          source: 'values',
+          flavor: 'reflection',
+          timestamp: Date.now(),
+          intensity: 0.6,
+        });
+      } else if (result.nuance) {
+        // Edge case resolved — store nuance as learning
+        this.selfState.pushStream({
+          text: `Values reflection: ${result.nuance}`,
+          source: 'values',
+          flavor: 'reflection',
+          timestamp: Date.now(),
+          intensity: 0.3,
+        });
+      }
+    } catch {
+      // Fire-and-forget
+    }
+  }
+
+  /**
+   * Periodic value evolution review: use Haiku to analyze recent decisions
+   * and extract patterns for more nuanced future reasoning.
+   */
+  private async reviewValueEvolution(): Promise<void> {
+    if (this.recentDecisions.length < 3) return;
+
+    try {
+      const response = await fetch('/api/mind/value-evolve', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          recentDecisions: this.recentDecisions.slice(-10),
+          growthInsights: this.recentGrowthInsights,
+        }),
+      });
+
+      if (!response.ok) return;
+
+      const evolution = (await response.json()) as {
+        insight: string;
+        refinement: string;
+      };
+
+      // Store value evolution insight as procedural memory
+      if (evolution.insight) {
+        this.emit('memory-write', {
+          content: `[Value Evolution] ${evolution.insight}. ${evolution.refinement}`,
+          type: 'procedural',
+          significance: 0.8,
+          tags: ['values', 'evolution'],
+        }, {
+          target: ENGINE_IDS.MEMORY_WRITE,
+          priority: SIGNAL_PRIORITIES.LOW,
+        });
+
+        this.selfState.pushStream({
+          text: evolution.insight,
+          source: 'values',
+          flavor: 'metacognitive',
+          timestamp: Date.now(),
+          intensity: 0.5,
+        });
+      }
+
+      // Clear processed decisions
+      this.recentDecisions = [];
+    } catch {
+      // Fire-and-forget
+    }
+  }
+
+  private logDecision(decision: ValueDecisionRecord): void {
+    this.recentDecisions.push(decision);
+    if (this.recentDecisions.length > 20) this.recentDecisions.shift();
   }
 
   private emitAligned(): void {
