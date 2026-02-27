@@ -170,7 +170,15 @@ export interface SignalPayloadMap {
   };
 
   // Resource management signals
-  'resource-budget': { sonnetRemaining: number; suggestedMaxTokens: number; useLite: boolean };
+  'resource-budget': {
+    sonnetRemaining: number;
+    haikuRemaining: number;
+    suggestedMaxTokens: number;
+    useLite: boolean;
+    haikuUtilization: number;
+    sonnetUtilization: number;
+    topConsumers: Array<{ engine: string; calls: number }>;
+  };
 
   // Tool activity signals
   'tool-activity': { toolName: string; status: 'started' | 'completed' | 'error'; input?: Record<string, unknown>; result?: string };

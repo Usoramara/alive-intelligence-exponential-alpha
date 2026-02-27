@@ -18,7 +18,7 @@ export class ArbiterEngine extends Engine {
   private latestWorkingMemory?: { summary: string; items: unknown[] };
   private latestDiscourse?: { currentTopic: string | null; openQuestions: string[]; commitments: string[] };
   private latestMetacognition?: { uncertainty: number; processingLoad: number; emotionalRegulation: string | null; coherence: number };
-  private latestResourceBudget?: { sonnetRemaining: number; suggestedMaxTokens: number; useLite: boolean };
+  private latestResourceBudget?: { sonnetRemaining: number; haikuRemaining: number; suggestedMaxTokens: number; useLite: boolean; haikuUtilization: number; sonnetUtilization: number; topConsumers: Array<{ engine: string; calls: number }> };
 
   // Body HAL context
   private bodyManifest: BodyManifest | null = null;
