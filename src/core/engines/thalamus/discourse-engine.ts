@@ -37,12 +37,49 @@ export class DiscourseEngine extends Engine {
   private topicClusters: TopicCluster[] = [];
   private lastMessageEmbedding: number[] | null = null;
 
-  // T1: Haiku for discourse coherence analysis
-  private lastCoherenceAnalysis = 0;
-  private coherenceAnalysisCooldown = 20000; // 20s
+  // Pre-computed intent embeddings
+  private questionIntentEmbedding: number[] | null = null;
+  private implicitQuestionEmbedding: number[] | null = null;
+  private commitmentIntentEmbedding: number[] | null = null;
+  private intentsComputed = false;
+
+  // T1: Haiku for topic labeling and commitment extraction
+  private lastHaikuLabel = 0;
+  private haikuLabelCooldown = 8000; // 8s between label generation
+  private pendingLabelContent: string | null = null;
+  private pendingLabelClusterIndex = -1;
+
+  private lastCommitmentExtraction = 0;
+  private commitmentExtractionCooldown = 5000;
 
   constructor() {
     super(ENGINE_IDS.DISCOURSE);
+    this.precomputeIntentEmbeddings();
+  }
+
+  private async precomputeIntentEmbeddings(): Promise<void> {
+    if (this.intentsComputed) return;
+
+    const questionEmb = await embed(
+      'I am asking a direct question and want an answer. Can you tell me? What is this?',
+    );
+    const implicitEmb = await embed(
+      'I wonder about this. It would be interesting to know. I am curious whether. Do you think maybe.',
+    );
+    const commitmentEmb = await embed(
+      'I will do this. I promise to help. Let me take care of that. I am going to make sure.',
+    );
+
+    if (questionEmb) this.questionIntentEmbedding = questionEmb;
+    if (implicitEmb) this.implicitQuestionEmbedding = implicitEmb;
+    if (commitmentEmb) this.commitmentIntentEmbedding = commitmentEmb;
+
+    if (questionEmb && implicitEmb && commitmentEmb) {
+      this.intentsComputed = true;
+    } else {
+      // Retry
+      setTimeout(() => this.precomputeIntentEmbeddings(), 5000);
+    }
   }
 
   protected subscribesTo(): SignalType[] {
@@ -64,6 +101,20 @@ export class DiscourseEngine extends Engine {
     this.status = 'idle';
   }
 
+  protected onIdle(): void {
+    // Generate Haiku topic labels for unlabeled clusters
+    const now = Date.now();
+    if (
+      this.pendingLabelContent &&
+      now - this.lastHaikuLabel > this.haikuLabelCooldown
+    ) {
+      this.lastHaikuLabel = now;
+      this.generateTopicLabel(this.pendingLabelContent, this.pendingLabelClusterIndex);
+      this.pendingLabelContent = null;
+    }
+    this.status = 'idle';
+  }
+
   private async processUserInput(content: string): Promise<void> {
     this.state.turnCount++;
 
@@ -73,59 +124,59 @@ export class DiscourseEngine extends Engine {
       if (emb) {
         await this.updateTopicClusters(content, emb);
         this.lastMessageEmbedding = emb;
+
+        // Semantic question detection
+        await this.detectQuestionsSemantic(content, emb);
       }
     } else {
-      // Fallback: keyword-based topic extraction
-      const topic = this.extractTopicFallback(content);
-      if (topic) {
-        this.setCurrentTopic(topic);
+      // Minimal fallback: only detect explicit ?
+      if (content.includes('?')) {
+        const question = content.trim();
+        if (question.length > 5 && !this.state.openQuestions.includes(question)) {
+          this.state.openQuestions.push(question);
+          if (this.state.openQuestions.length > 5) this.state.openQuestions.shift();
+        }
       }
     }
-
-    // Semantic question detection
-    await this.detectQuestions(content);
   }
 
   /**
    * Embedding-based topic clustering.
    * Groups semantically similar messages into topic clusters.
-   * Detects topic shifts by measuring distance to current cluster.
    */
   private async updateTopicClusters(content: string, embedding: number[]): Promise<void> {
     const now = Date.now();
 
     // Find most similar existing cluster
-    let bestCluster: { cluster: TopicCluster; similarity: number } | null = null;
-    for (const cluster of this.topicClusters) {
-      const sim = cosineSimilarity(embedding, cluster.embedding);
+    let bestCluster: { cluster: TopicCluster; similarity: number; index: number } | null = null;
+    for (let i = 0; i < this.topicClusters.length; i++) {
+      const sim = cosineSimilarity(embedding, this.topicClusters[i].embedding);
       if (!bestCluster || sim > bestCluster.similarity) {
-        bestCluster = { cluster, similarity: sim };
+        bestCluster = { cluster: this.topicClusters[i], similarity: sim, index: i };
       }
     }
 
     if (bestCluster && bestCluster.similarity > 0.5) {
-      // Belongs to existing cluster — update it
+      // Belongs to existing cluster
       const cluster = bestCluster.cluster;
       cluster.messageCount++;
       cluster.lastSeen = now;
 
-      // Weighted average to update cluster centroid
+      // Weighted average to update centroid
       const weight = 1 / cluster.messageCount;
       for (let i = 0; i < embedding.length; i++) {
         cluster.embedding[i] = cluster.embedding[i] * (1 - weight) + embedding[i] * weight;
       }
 
-      // If this is a different cluster than current topic, it's a topic shift
       if (this.state.currentTopic !== cluster.label) {
         this.setCurrentTopic(cluster.label);
       }
     } else {
-      // New topic cluster
-      // Use first significant words as label (better than nothing)
-      const label = this.extractTopicFallback(content) || content.slice(0, 30);
+      // New cluster — use content snippet as temporary label, queue Haiku for proper label
+      const tempLabel = content.slice(0, 40).replace(/\s+/g, ' ').trim();
 
       const newCluster: TopicCluster = {
-        label,
+        label: tempLabel,
         embedding: [...embedding],
         messageCount: 1,
         firstSeen: now,
@@ -133,13 +184,53 @@ export class DiscourseEngine extends Engine {
       };
 
       this.topicClusters.push(newCluster);
+      const clusterIndex = this.topicClusters.length - 1;
+
       if (this.topicClusters.length > 10) {
-        // Remove oldest cluster
         this.topicClusters.sort((a, b) => b.lastSeen - a.lastSeen);
         this.topicClusters = this.topicClusters.slice(0, 10);
       }
 
-      this.setCurrentTopic(label);
+      this.setCurrentTopic(tempLabel);
+
+      // Queue Haiku label generation
+      this.pendingLabelContent = content;
+      this.pendingLabelClusterIndex = clusterIndex;
+    }
+  }
+
+  /**
+   * T1: Generate a concise topic label via Haiku.
+   */
+  private async generateTopicLabel(content: string, clusterIndex: number): Promise<void> {
+    if (clusterIndex < 0 || clusterIndex >= this.topicClusters.length) return;
+
+    try {
+      const response = await fetch('/api/mind/reflect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          memories: [],
+          mood: this.selfState.get(),
+          count: 1,
+          context: `TOPIC LABELING:\nGenerate a 2-4 word topic label for this message:\n"${content.slice(0, 200)}"\n\nRespond with ONLY the label, nothing else.`,
+          flavorHints: ['reflection'],
+        }),
+      });
+
+      if (!response.ok) return;
+
+      const data = await response.json() as { thought?: string; thoughts?: Array<{ text: string }> };
+      const label = (data.thought ?? data.thoughts?.[0]?.text)?.slice(0, 40);
+
+      if (label && clusterIndex < this.topicClusters.length) {
+        this.topicClusters[clusterIndex].label = label;
+        if (this.state.currentTopic === this.topicClusters[clusterIndex].label || clusterIndex === this.topicClusters.length - 1) {
+          this.state.currentTopic = label;
+        }
+      }
+    } catch {
+      // Non-critical
     }
   }
 
@@ -152,18 +243,33 @@ export class DiscourseEngine extends Engine {
   }
 
   /**
-   * Detect questions using both explicit markers and semantic analysis.
+   * T0: Semantic question detection via embedding similarity to question-intent clusters.
+   * Handles both explicit ("what is...?") and implicit ("I wonder about...", "It would be interesting to know...") questions.
    */
-  private async detectQuestions(content: string): Promise<void> {
-    const sentences = content.split(/[.!]+/).filter(s => s.trim());
+  private async detectQuestionsSemantic(content: string, contentEmbedding: number[]): Promise<void> {
+    const hasQuestionMark = content.includes('?');
 
-    for (const sentence of sentences) {
-      const trimmed = sentence.trim();
-      const isExplicitQuestion = trimmed.endsWith('?') || content.includes('?');
-      const isImplicitQuestion = /\b(I wonder|curious about|would like to know|do you think|what if|how come)\b/i.test(trimmed);
+    // Direct question detection
+    if (hasQuestionMark) {
+      // Split on ? to get individual questions
+      const parts = content.split('?').filter(s => s.trim().length > 5);
+      for (const part of parts) {
+        const q = part.trim() + '?';
+        if (!this.state.openQuestions.includes(q)) {
+          this.state.openQuestions.push(q);
+          if (this.state.openQuestions.length > 5) this.state.openQuestions.shift();
+        }
+      }
+      return;
+    }
 
-      if ((isExplicitQuestion || isImplicitQuestion) && trimmed.length > 5) {
-        if (!this.state.openQuestions.includes(trimmed)) {
+    // Implicit question detection via embedding similarity
+    if (this.implicitQuestionEmbedding) {
+      const similarity = cosineSimilarity(contentEmbedding, this.implicitQuestionEmbedding);
+      if (similarity > 0.45) {
+        // High similarity to implicit question intent
+        const trimmed = content.trim();
+        if (trimmed.length > 5 && !this.state.openQuestions.includes(trimmed)) {
           this.state.openQuestions.push(trimmed);
           if (this.state.openQuestions.length > 5) this.state.openQuestions.shift();
         }
@@ -171,60 +277,76 @@ export class DiscourseEngine extends Engine {
     }
   }
 
+  /**
+   * Process system output: detect commitments semantically and resolve open questions.
+   */
   private async processSystemOutput(content: string): Promise<void> {
-    // Detect commitments
-    const commitmentPattern = /\b(I will|I'll|let me|I can help|I should|I'm going to)\b[^.!?]*/gi;
-    const matches = content.match(commitmentPattern);
-    if (matches) {
-      for (const match of matches) {
-        const commitment = match.trim();
-        if (commitment.length > 10 && !this.state.commitments.includes(commitment)) {
-          this.state.commitments.push(commitment);
-          if (this.state.commitments.length > 5) this.state.commitments.shift();
-        }
-      }
-    }
+    const now = Date.now();
 
-    // Semantic question resolution: check if response addresses open questions
-    if (isEmbeddingReady() && this.state.openQuestions.length > 0) {
-      const responseEmb = await embed(content);
-      if (responseEmb) {
-        const resolved: number[] = [];
-        for (let i = 0; i < this.state.openQuestions.length; i++) {
-          const qEmb = await embed(this.state.openQuestions[i]);
-          if (qEmb) {
-            const sim = cosineSimilarity(responseEmb, qEmb);
-            if (sim > 0.5) {
-              resolved.push(i);
+    // T0: Semantic commitment detection via embedding similarity
+    if (isEmbeddingReady() && this.commitmentIntentEmbedding) {
+      const emb = await embed(content);
+      if (emb) {
+        const similarity = cosineSimilarity(emb, this.commitmentIntentEmbedding);
+
+        if (similarity > 0.4 && now - this.lastCommitmentExtraction > this.commitmentExtractionCooldown) {
+          // Content seems to contain commitments — use Haiku to extract them
+          this.lastCommitmentExtraction = now;
+          this.extractCommitmentsHaiku(content);
+        }
+
+        // Semantic question resolution
+        if (this.state.openQuestions.length > 0) {
+          const resolved: number[] = [];
+          for (let i = 0; i < this.state.openQuestions.length; i++) {
+            const qEmb = await embed(this.state.openQuestions[i]);
+            if (qEmb) {
+              const sim = cosineSimilarity(emb, qEmb);
+              if (sim > 0.5) resolved.push(i);
             }
           }
-        }
-        // Remove resolved questions (reverse order to maintain indices)
-        for (const idx of resolved.reverse()) {
-          this.state.openQuestions.splice(idx, 1);
+          for (const idx of resolved.reverse()) {
+            this.state.openQuestions.splice(idx, 1);
+          }
         }
       }
-    } else {
-      // Fallback: word overlap question resolution
-      this.state.openQuestions = this.state.openQuestions.filter(q => {
-        const qWords = new Set(q.toLowerCase().split(/\s+/).filter(w => w.length > 3));
-        const responseWords = content.toLowerCase().split(/\s+/);
-        const overlap = responseWords.filter(w => qWords.has(w)).length;
-        return overlap < 2;
-      });
     }
   }
 
-  private extractTopicFallback(content: string): string | null {
-    const stopwords = new Set(['the', 'and', 'but', 'for', 'with', 'that', 'this', 'from', 'have', 'been', 'will', 'what', 'when', 'where', 'which', 'about', 'there', 'their', 'would', 'could', 'should', 'just', 'like', 'know', 'think', 'really', 'very', 'much', 'some', 'also', 'into', 'your', 'they', 'them']);
-    const words = content
-      .toLowerCase()
-      .replace(/[^a-z\s]/g, '')
-      .split(/\s+/)
-      .filter(w => w.length > 3 && !stopwords.has(w));
+  /**
+   * T1: Extract commitments from response text via Haiku.
+   */
+  private async extractCommitmentsHaiku(content: string): Promise<void> {
+    try {
+      const response = await fetch('/api/mind/reflect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          memories: [],
+          mood: this.selfState.get(),
+          count: 1,
+          context: `COMMITMENT EXTRACTION:\nExtract any commitments or promises made in this response:\n"${content.slice(0, 500)}"\n\nList each commitment as a short phrase, separated by "|". If no commitments, respond with "none".`,
+          flavorHints: ['reflection'],
+        }),
+      });
 
-    if (words.length === 0) return null;
-    return words.slice(0, 3).join(' ');
+      if (!response.ok) return;
+
+      const data = await response.json() as { thought?: string; thoughts?: Array<{ text: string }> };
+      const text = data.thought ?? data.thoughts?.[0]?.text;
+
+      if (text && text.toLowerCase() !== 'none') {
+        const commitments = text.split('|').map(c => c.trim()).filter(c => c.length > 5);
+        for (const commitment of commitments) {
+          if (!this.state.commitments.includes(commitment)) {
+            this.state.commitments.push(commitment);
+            if (this.state.commitments.length > 5) this.state.commitments.shift();
+          }
+        }
+      }
+    } catch {
+      // Non-critical
+    }
   }
 
   private emitState(): void {

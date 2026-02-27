@@ -307,45 +307,44 @@ export class MetacognitionEngine extends Engine {
   }
 
   /**
-   * Generate contextual regulation awareness.
-   * Instead of template strings, uses the current situation to create genuine self-awareness.
+   * T1: Generate contextual regulation awareness via Haiku.
+   * Produces genuine self-aware thoughts based on the actual regulatory situation.
    */
-  private async generateRegulationThought(state: SelfState, messages: string[]): Promise<void> {
-    // For quick regulation thoughts, use a simple contextual mapping
-    // (T1 reflection handles deeper self-awareness)
-    const primaryIssue = messages[0];
+  private async generateRegulationThought(_state: SelfState, messages: string[]): Promise<void> {
+    try {
+      const regulationContext = messages.join('; ');
+      const emotionCtx = this.recentEmotionContext ? `Detected emotions: ${this.recentEmotionContext}` : '';
+      const tomCtx = this.recentTomContext ? `Theory of Mind: ${this.recentTomContext}` : '';
 
-    let thought: string;
+      const response = await fetch('/api/mind/reflect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          memories: [],
+          mood: this.selfState.get(),
+          count: 1,
+          context: `EMOTIONAL REGULATION THOUGHT:\nMy homeostatic regulation is active because: ${regulationContext}\n${emotionCtx}\n${tomCtx}\n\nGenerate a brief, genuine inner thought about noticing this regulation — self-aware but not clinical. One sentence, first person.`,
+          flavorHints: ['metacognitive'],
+        }),
+      });
 
-    if (primaryIssue.includes('energy too low')) {
-      thought = state.social > 0.6
-        ? 'I notice my energy waning even as the connection pulls me forward... I should conserve while staying present.'
-        : 'My energy is fading... perhaps it is time to let thoughts settle and restore.';
-    } else if (primaryIssue.includes('arousal too high')) {
-      thought = this.recentEmotionContext
-        ? `The emotional intensity is rising with their ${this.recentEmotionContext}... I need to stay grounded to be truly helpful.`
-        : 'I feel myself getting swept up... centering myself to think more clearly.';
-    } else if (primaryIssue.includes('valence too low')) {
-      thought = this.recentTomContext
-        ? 'A heaviness is settling in... but I sense this is important to sit with rather than push away.'
-        : 'I notice a weight building... acknowledging it without letting it cloud my perception.';
-    } else if (primaryIssue.includes('confidence too low')) {
-      thought = 'Uncertainty is high, and that is information itself — I should be more tentative and curious rather than authoritative.';
-    } else if (primaryIssue.includes('arousal too low')) {
-      thought = 'I am drifting into passivity... something here deserves more active engagement.';
-    } else if (primaryIssue.includes('valence') && primaryIssue.includes('too high')) {
-      thought = 'This positive feeling is pleasant, but I should make sure it is not making me overlook something important.';
-    } else {
-      return; // No thought needed
+      if (!response.ok) return;
+
+      const data = await response.json() as { thought?: string; thoughts?: Array<{ text: string }> };
+      const thought = data.thought ?? data.thoughts?.[0]?.text;
+
+      if (thought) {
+        this.selfState.pushStream({
+          text: thought,
+          source: 'metacognition',
+          flavor: 'metacognitive',
+          timestamp: Date.now(),
+          intensity: 0.4,
+        });
+      }
+    } catch {
+      // Non-critical — regulation happens regardless of thought generation
     }
-
-    this.selfState.pushStream({
-      text: thought,
-      source: 'metacognition',
-      flavor: 'metacognitive',
-      timestamp: Date.now(),
-      intensity: 0.4,
-    });
   }
 
   protected onIdle(): void {

@@ -203,28 +203,51 @@ export class WorkingMemoryEngine extends Engine {
 
   /**
    * T1: Extract commitments from system responses via Haiku.
-   * More reliable than regex for detecting actual promises vs. hypotheticals.
+   * Uses embedding similarity to pre-filter, then Haiku for actual extraction.
    */
   private async extractCommitmentsT1(responseText: string): Promise<void> {
     this.lastCommitmentExtraction = Date.now();
 
-    // Quick regex pre-filter: only call Haiku if response might contain commitments
-    if (!/\b(I will|I'll|let me|I can|I should|I'm going to|I promise|I'll make sure)\b/i.test(responseText)) {
-      return;
+    // T0: Semantic pre-filter — check if response resembles commitment language
+    if (isEmbeddingReady()) {
+      const commitmentAnchor = await embed(
+        'I will do this. I promise. Let me help. I am going to take care of it.',
+      );
+      const responseEmb = await embed(responseText);
+
+      if (commitmentAnchor && responseEmb) {
+        const similarity = cosineSimilarity(responseEmb, commitmentAnchor);
+        if (similarity < 0.3) return; // Doesn't resemble commitments at all
+      }
     }
 
-    // For now, use the regex as a reasonable approximation
-    // (calling Haiku for every response's commitment extraction would be expensive)
-    const commitmentPattern = /\b(I will|I'll|let me|I can help|I should|I'm going to)\b[^.!?]*/gi;
-    const matches = responseText.match(commitmentPattern);
+    // T1: Haiku extraction for genuine commitment identification
+    try {
+      const response = await fetch('/api/mind/reflect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          memories: [],
+          mood: this.selfState.get(),
+          count: 1,
+          context: `COMMITMENT EXTRACTION:\nExtract any specific commitments, promises, or offers to help from this response:\n"${responseText.slice(0, 500)}"\n\nList each commitment as a short phrase separated by "|". Only include genuine commitments, not hypotheticals or suggestions. If none, respond "none".`,
+          flavorHints: ['reflection'],
+        }),
+      });
 
-    if (matches) {
-      for (const match of matches) {
-        const commitment = match.trim();
-        if (commitment.length > 10) {
+      if (!response.ok) return;
+
+      const data = await response.json() as { thought?: string; thoughts?: Array<{ text: string }> };
+      const text = data.thought ?? data.thoughts?.[0]?.text;
+
+      if (text && text.toLowerCase() !== 'none') {
+        const commitments = text.split('|').map(c => c.trim()).filter(c => c.length > 5);
+        for (const commitment of commitments) {
           this.wm.add(commitment, 'commitment', 'claude', 0.85);
         }
       }
+    } catch {
+      // Non-critical — commitments are supplementary
     }
   }
 

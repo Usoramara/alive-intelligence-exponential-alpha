@@ -41,6 +41,30 @@ function zScore(stats: RollingStats, value: number): number {
   return (value - stats.mean) / stats.stdDev;
 }
 
+// Semantic intent categories for embedding-based detection
+const INTENT_ANCHORS = {
+  contradiction: [
+    'I say I am fine but I actually feel terrible',
+    'Everything is good but something feels wrong',
+    'I am happy although I want to cry',
+  ],
+  absoluteThinking: [
+    'Everything always goes wrong for me no matter what',
+    'Nobody ever listens or cares about me',
+    'I will never be good enough for anything',
+  ],
+  urgentNeed: [
+    'I desperately need help with this right now',
+    'Please I am struggling and need support urgently',
+    'I cannot handle this alone anymore',
+  ],
+  hesitation: [
+    'I am not sure how to say this but well...',
+    'There is something I want to tell you... I just...',
+    'Maybe this is silly but I keep thinking about...',
+  ],
+};
+
 export class IntuitionEngine extends Engine {
   // Statistical tracking
   private messageLengths = createRollingStats(30);
@@ -50,21 +74,63 @@ export class IntuitionEngine extends Engine {
 
   // Embedding-based communication style tracking
   private styleEmbeddings: Array<{ embedding: number[]; timestamp: number }> = [];
-  private styleShiftStats = createRollingStats(15); // Track inter-message embedding similarity
+  private styleShiftStats = createRollingStats(15);
 
-  // Pattern-based (secondary, lower weight)
-  private anomalyPatterns: Array<{ pattern: RegExp; alert: string; weight: number }> = [
-    { pattern: /\b(but|however|although|yet)\b.*\b(good|great|fine|ok)\b/i, alert: 'Contradiction — positive words with hedging', weight: 0.4 },
-    { pattern: /\b(always|never|everyone|nobody)\b/i, alert: 'Absolute language — strong emotion or cognitive distortion', weight: 0.3 },
-    { pattern: /\b(help|please|need|desperate)\b/i, alert: 'Request for help — elevated significance', weight: 0.5 },
-    { pattern: /\?\s*\?|\!\s*\!/i, alert: 'Repeated punctuation — heightened expression', weight: 0.3 },
-    { pattern: /\.{3,}/i, alert: 'Trailing off — hesitation or unspoken thoughts', weight: 0.2 },
-  ];
+  // Pre-computed intent centroids
+  private intentCentroids: Array<{ name: string; alert: string; centroid: number[] }> = [];
+  private centroidsComputed = false;
 
   private recentContents: string[] = [];
 
   constructor() {
     super(ENGINE_IDS.INTUITION);
+    this.computeIntentCentroids();
+  }
+
+  /**
+   * Pre-compute embedding centroids for semantic intent detection.
+   * Replaces regex-based anomaly patterns with embedding similarity.
+   */
+  private async computeIntentCentroids(): Promise<void> {
+    if (!isEmbeddingReady()) {
+      setTimeout(() => this.computeIntentCentroids(), 5000);
+      return;
+    }
+
+    const categories: Array<{ name: string; alert: string; anchors: string[] }> = [
+      { name: 'contradiction', alert: 'Contradiction detected — words don\'t match underlying feeling', anchors: INTENT_ANCHORS.contradiction },
+      { name: 'absoluteThinking', alert: 'Absolute thinking pattern — strong emotion or cognitive distortion', anchors: INTENT_ANCHORS.absoluteThinking },
+      { name: 'urgentNeed', alert: 'Urgent need for help or support detected', anchors: INTENT_ANCHORS.urgentNeed },
+      { name: 'hesitation', alert: 'Hesitation or unspoken thoughts — something beneath the surface', anchors: INTENT_ANCHORS.hesitation },
+    ];
+
+    for (const cat of categories) {
+      const vectors: number[][] = [];
+      for (const anchor of cat.anchors) {
+        const v = await embed(anchor);
+        if (v) vectors.push(v);
+      }
+      if (vectors.length === 0) continue;
+
+      // Average to centroid
+      const centroid = new Array(vectors[0].length).fill(0);
+      for (const vec of vectors) {
+        for (let i = 0; i < vec.length; i++) centroid[i] += vec[i];
+      }
+      for (let i = 0; i < centroid.length; i++) centroid[i] /= vectors.length;
+
+      // Normalize
+      let norm = 0;
+      for (let i = 0; i < centroid.length; i++) norm += centroid[i] * centroid[i];
+      norm = Math.sqrt(norm);
+      if (norm > 0) {
+        for (let i = 0; i < centroid.length; i++) centroid[i] /= norm;
+      }
+
+      this.intentCentroids.push({ name: cat.name, alert: cat.alert, centroid });
+    }
+
+    this.centroidsComputed = this.intentCentroids.length > 0;
   }
 
   protected subscribesTo(): SignalType[] {
@@ -127,13 +193,8 @@ export class IntuitionEngine extends Engine {
       // --- Embedding-based communication style shift detection ---
       this.detectStyleShift(content);
 
-      // --- Pattern-based detection (secondary, lower confidence) ---
-      for (const { pattern, alert, weight } of this.anomalyPatterns) {
-        if (pattern.test(content)) {
-          this.emitAnomaly(alert, weight * 0.6, 'pattern');
-          break;
-        }
-      }
+      // --- Embedding-based intent detection (replaces regex patterns) ---
+      this.detectSemanticIntents(content);
 
       // --- Semantic topic shift detection ---
       if (this.recentContents.length > 2) {
@@ -144,9 +205,46 @@ export class IntuitionEngine extends Engine {
   }
 
   /**
+   * T0: Detect semantic intents via embedding similarity to intent centroids.
+   * Replaces regex-based anomaly patterns with genuine semantic understanding.
+   */
+  private async detectSemanticIntents(content: string): Promise<void> {
+    if (!this.centroidsComputed || !isEmbeddingReady()) return;
+
+    const emb = await embed(content);
+    if (!emb) return;
+
+    for (const intent of this.intentCentroids) {
+      const similarity = cosineSimilarity(emb, intent.centroid);
+
+      // Different thresholds per intent category
+      let threshold = 0.4;
+      let weight = 0.5;
+
+      if (intent.name === 'urgentNeed') {
+        threshold = 0.35; // Lower threshold — don't miss urgent needs
+        weight = 0.8;
+      } else if (intent.name === 'contradiction') {
+        threshold = 0.42;
+        weight = 0.6;
+      } else if (intent.name === 'hesitation') {
+        threshold = 0.4;
+        weight = 0.4;
+      }
+
+      if (similarity > threshold) {
+        this.emitAnomaly(
+          intent.alert,
+          Math.min(1, similarity * weight * 2),
+          'structural',
+        );
+        break; // Only emit one intent per message
+      }
+    }
+  }
+
+  /**
    * T0: Detect subtle shifts in communication style via embeddings.
-   * Tracks embedding similarity between consecutive messages.
-   * A sudden drop in similarity suggests a style/tone change.
    */
   private async detectStyleShift(content: string): Promise<void> {
     if (!isEmbeddingReady()) return;
@@ -161,7 +259,6 @@ export class IntuitionEngine extends Engine {
       pushStat(this.styleShiftStats, similarity);
       const simZ = zScore(this.styleShiftStats, similarity);
 
-      // A significantly lower-than-normal similarity suggests a communication style shift
       if (simZ < -2 && this.styleShiftStats.values.length >= 5) {
         this.emitAnomaly(
           'Communication style shift detected — tone or approach has changed subtly',
@@ -179,7 +276,6 @@ export class IntuitionEngine extends Engine {
 
   /**
    * Semantic topic shift detection using embeddings.
-   * More reliable than word overlap for detecting genuine topic changes.
    */
   private async detectTopicShiftSemantic(content: string): Promise<void> {
     if (this.recentContents.length < 2) return;
@@ -193,18 +289,11 @@ export class IntuitionEngine extends Engine {
           this.selfState.nudge('curiosity', 0.03);
           this.emitAnomaly('Abrupt topic shift — something new emerged', 0.5, 'structural');
         }
-        return;
       }
-    }
-
-    // Fallback: word overlap
-    if (this.topicShiftFallback(prev, content)) {
-      this.selfState.nudge('curiosity', 0.03);
-      this.emitAnomaly('Abrupt topic shift — something new emerged', 0.5, 'structural');
     }
   }
 
-  private emitAnomaly(alert: string, confidence: number, source: 'statistical' | 'pattern' | 'structural'): void {
+  private emitAnomaly(alert: string, confidence: number, source: 'statistical' | 'structural'): void {
     this.emit('intuition-alert', {
       message: alert,
       confidence,
@@ -225,13 +314,5 @@ export class IntuitionEngine extends Engine {
     if (typeof payload.content === 'string') return payload.content;
     if (typeof payload.text === 'string') return payload.text;
     return null;
-  }
-
-  private topicShiftFallback(prev: string, current: string): boolean {
-    const prevWords = new Set(prev.toLowerCase().split(/\s+/).filter(w => w.length > 3));
-    const currentWords = current.toLowerCase().split(/\s+/).filter(w => w.length > 3);
-    if (currentWords.length < 3) return false;
-    const overlap = currentWords.filter(w => prevWords.has(w)).length;
-    return overlap < 1;
   }
 }

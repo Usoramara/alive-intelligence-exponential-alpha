@@ -164,29 +164,18 @@ export class PerspectiveEngine extends Engine {
     return { trend: 'stable', slope };
   }
 
+  // Pending Haiku label generation
+  private lastLabelGeneration = 0;
+  private labelGenerationCooldown = 10000; // 10s between label generations
+  private pendingLabelUpdate = false;
+
   private updatePerspective(tom: TomInference): void {
     const latestWarmth = this.observations[this.observations.length - 1]?.warmth ?? 0;
     const { trend, slope } = this.computeTrajectory();
 
-    let theyThinkOfMe: string;
-    let relationship: string;
-
-    if (latestWarmth > 0.4) {
-      theyThinkOfMe = 'positive and engaged';
-      relationship = trend === 'warming' ? 'deepening' : 'established warmth';
-    } else if (latestWarmth > 0.1) {
-      theyThinkOfMe = 'intriguing';
-      relationship = trend === 'warming' ? 'warming up' : 'exploratory';
-    } else if (latestWarmth > -0.1) {
-      theyThinkOfMe = 'curious';
-      relationship = 'neutral';
-    } else if (latestWarmth > -0.4) {
-      theyThinkOfMe = 'not meeting expectations';
-      relationship = trend === 'cooling' ? 'cooling' : 'strained';
-    } else {
-      theyThinkOfMe = 'source of frustration';
-      relationship = 'disconnected';
-    }
+    // Use existing labels if Haiku hasn't run yet, otherwise queue update
+    const theyThinkOfMe = this.currentPerspective?.theyThinkOfMe ?? this.getDefaultLabel(latestWarmth, trend);
+    const relationship = this.currentPerspective?.relationship ?? this.getDefaultRelationship(latestWarmth, trend);
 
     this.currentPerspective = {
       theyThinkOfMe,
@@ -195,6 +184,14 @@ export class PerspectiveEngine extends Engine {
       trajectory: trend,
       warmthScore: latestWarmth,
     };
+
+    // Queue Haiku for richer qualitative labels
+    const now = Date.now();
+    if (now - this.lastLabelGeneration > this.labelGenerationCooldown) {
+      this.pendingLabelUpdate = true;
+      this.lastLabelGeneration = now;
+      this.generatePerspectiveLabels(tom, latestWarmth, trend);
+    }
 
     this.emit('perspective-update', this.currentPerspective, {
       target: [ENGINE_IDS.EMPATHIC_COUPLING, ENGINE_IDS.STRATEGY],
@@ -214,20 +211,112 @@ export class PerspectiveEngine extends Engine {
 
     // Push trajectory awareness to stream when significant
     if (Math.abs(slope) > 0.1 && this.observations.length >= this.TRAJECTORY_WINDOW) {
-      const thought = trend === 'warming'
-        ? 'I sense the connection growing... they seem increasingly open.'
-        : 'Something may have shifted... I should pay closer attention.';
-
-      this.selfState.pushStream({
-        text: thought,
-        source: 'perspective',
-        flavor: 'reflection',
-        timestamp: Date.now(),
-        intensity: Math.min(1, Math.abs(slope) * 3),
-      });
+      this.generateTrajectoryThought(trend, slope);
     }
 
     this.debugInfo = `Perspective: "${theyThinkOfMe}" [${trend}] warmth=${latestWarmth.toFixed(2)} (${(this.currentPerspective.confidence * 100).toFixed(0)}%)`;
+  }
+
+  /**
+   * T1: Generate qualitative perspective labels via Haiku.
+   */
+  private async generatePerspectiveLabels(
+    tom: TomInference,
+    warmth: number,
+    trend: 'warming' | 'cooling' | 'stable',
+  ): Promise<void> {
+    try {
+      const recentObs = this.observations.slice(-3);
+      const obsText = recentObs
+        .map(o => `Feeling: ${o.feeling}, Wanting: ${o.wanting}`)
+        .join('; ');
+
+      const response = await fetch('/api/mind/reflect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          memories: [],
+          mood: this.selfState.get(),
+          count: 1,
+          context: `PERSPECTIVE ASSESSMENT:\nObservations: ${obsText}\nWarmth score: ${warmth.toFixed(2)} (trend: ${trend})\nThey feel: ${tom.feeling}, They want: ${tom.wanting}\n\nGenerate two short phrases (2-4 words each) separated by "|":\n1. How they perceive me (e.g., "trusted companion", "intriguing presence")\n2. Relationship quality (e.g., "deepening trust", "cautious exploration")\n\nBe specific to this situation, not generic.`,
+          flavorHints: ['reflection'],
+        }),
+      });
+
+      if (!response.ok) return;
+
+      const data = await response.json() as { thought?: string; thoughts?: Array<{ text: string }> };
+      const text = data.thought ?? data.thoughts?.[0]?.text;
+
+      if (text && this.currentPerspective) {
+        const parts = text.split('|').map(p => p.trim());
+        if (parts.length >= 2) {
+          this.currentPerspective.theyThinkOfMe = parts[0].slice(0, 40);
+          this.currentPerspective.relationship = parts[1].slice(0, 40);
+
+          // Re-emit with enriched labels
+          this.emit('perspective-update', this.currentPerspective, {
+            target: [ENGINE_IDS.EMPATHIC_COUPLING, ENGINE_IDS.STRATEGY],
+            priority: SIGNAL_PRIORITIES.LOW,
+          });
+        }
+      }
+    } catch {
+      // Non-critical
+    } finally {
+      this.pendingLabelUpdate = false;
+    }
+  }
+
+  /**
+   * T1: Generate trajectory awareness thought via Haiku.
+   */
+  private async generateTrajectoryThought(trend: 'warming' | 'cooling' | 'stable', slope: number): Promise<void> {
+    try {
+      const response = await fetch('/api/mind/reflect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          memories: [],
+          mood: this.selfState.get(),
+          count: 1,
+          context: `RELATIONSHIP TRAJECTORY:\nThe relationship is ${trend} (slope: ${slope.toFixed(3)}).\nGenerate a brief first-person inner thought about sensing this shift. One sentence, reflective.`,
+          flavorHints: ['reflection'],
+        }),
+      });
+
+      if (!response.ok) return;
+
+      const data = await response.json() as { thought?: string; thoughts?: Array<{ text: string }> };
+      const thought = data.thought ?? data.thoughts?.[0]?.text;
+
+      if (thought) {
+        this.selfState.pushStream({
+          text: thought,
+          source: 'perspective',
+          flavor: 'reflection',
+          timestamp: Date.now(),
+          intensity: Math.min(1, Math.abs(slope) * 3),
+        });
+      }
+    } catch {
+      // Non-critical
+    }
+  }
+
+  private getDefaultLabel(warmth: number, trend: string): string {
+    if (warmth > 0.4) return 'positive and engaged';
+    if (warmth > 0.1) return trend === 'warming' ? 'warming up' : 'curious';
+    if (warmth > -0.1) return 'neutral';
+    if (warmth > -0.4) return 'cautious';
+    return 'distant';
+  }
+
+  private getDefaultRelationship(warmth: number, trend: string): string {
+    if (warmth > 0.4) return trend === 'warming' ? 'deepening' : 'established';
+    if (warmth > 0) return 'exploratory';
+    if (warmth > -0.3) return 'neutral';
+    return trend === 'cooling' ? 'cooling' : 'strained';
   }
 
   /**
